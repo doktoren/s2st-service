@@ -57,7 +57,7 @@ function toSeamlessLang(code, {target=false} = {}) {
 
 const log = (...a) => { const el = document.getElementById("log"); el.textContent += a.join(" ") + "\n"; el.scrollTop = el.scrollHeight; };
 
-let ctx, mediaStream, sourceNode, workletNode, sink, ws, seq = 0, playingCtx, framesSent = 0;
+let ctx, mediaStream, sourceNode, workletNode, sink, ws, seq = 0, playingCtx, framesSent = 0, nextPlayTime = 0;
 let opened = false;
 
 document.getElementById("start").onclick = start;
@@ -75,7 +75,7 @@ async function start() {
   const WS_URL = document.getElementById("wsurl").value.trim();
   const tgtLangIn = document.getElementById("tgt").value.trim() || "en";
   const tgtLang = toSeamlessLang(tgtLangIn, {target:true});
-  seq = 0; framesSent = 0;
+  seq = 0; framesSent = 0; nextPlayTime = 0;
 
   if (!navigator.mediaDevices?.getUserMedia) {
     alert("getUserMedia unavailable. Use https or http://localhost.");
@@ -88,9 +88,9 @@ async function start() {
     mediaStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
       }
     });
   } catch (e) {
@@ -209,6 +209,8 @@ async function stop() {
   try { sink?.disconnect(); } catch {}
   try { mediaStream?.getTracks().forEach(t => t.stop()); } catch {}
   try { await ctx?.close(); } catch {}
+  try { await playingCtx?.close(); } catch {}
+  playingCtx = undefined; nextPlayTime = 0;
   document.getElementById("start").disabled = false;
   document.getElementById("stop").disabled = true;
 }
@@ -236,6 +238,7 @@ function bytesFromBase64(b64) {
   return u8;
 }
 
+// Plays a PCM16 mono buffer sequentially without overlapping with prior audio.
 function playPcm16Mono(u8, sampleRate) {
   const len = u8.byteLength / 2;
   const f32 = new Float32Array(len);
@@ -244,13 +247,17 @@ function playPcm16Mono(u8, sampleRate) {
     const s = dv.getInt16(i * 2, true);
     f32[i] = s / 0x8000;
   }
-  if (!playingCtx) playingCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate });
+  if (!playingCtx) {
+    playingCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate });
+  }
   const buf = playingCtx.createBuffer(1, f32.length, sampleRate);
   buf.copyToChannel(f32, 0, 0);
   const src = playingCtx.createBufferSource();
   src.buffer = buf;
   src.connect(playingCtx.destination);
-  src.start();
+  const startTime = Math.max(nextPlayTime, playingCtx.currentTime);
+  src.start(startTime);
+  nextPlayTime = startTime + buf.duration;
 }
 </script>
 </body>
