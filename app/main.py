@@ -25,7 +25,7 @@ from typing import Any, Literal, TypedDict
 import g711
 import numpy as np
 import orjson
-import torch
+import torch  # type: ignore[import-not-found]
 import torchaudio
 import webrtcvad
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -161,7 +161,7 @@ class AudioUtils:
         """Convert torch float tensor in [-1, 1] to PCM16 little-endian bytes (mono)."""
         clamped = torch.clamp(wave, -1.0, 1.0)
         pcm16 = (clamped * 32767.0).round().to(dtype=torch.int16).cpu().numpy()
-        return pcm16.tobytes()
+        return bytes(pcm16.tobytes())
 
     @staticmethod
     def resample(wave: torch.Tensor, src_sr: int, dst_sr: int) -> torch.Tensor:
@@ -170,7 +170,7 @@ class AudioUtils:
             return wave
         resampler = torchaudio.transforms.Resample(orig_freq=src_sr, new_freq=dst_sr)
         # torchaudio expects shape (channels, time)
-        return resampler(wave.view(1, -1)).view(-1)  # type: ignore[no-any-return]
+        return resampler(wave.view(1, -1)).view(-1)
 
 
 # ---------------------------
@@ -197,7 +197,7 @@ class SeamlessEngine:
         self.model.to(cfg.device)
         self.model.eval()
 
-    @torch.inference_mode()
+    @torch.inference_mode()  # type: ignore[misc]
     def s2st(
         self,
         audio_16k: torch.Tensor,
@@ -438,7 +438,7 @@ async def _handle_audio_msg(msg: AudioMessage, setup: SetupMessage, state: Sessi
 
 
 def _vad_segment_closed(state: SessionState) -> bool:
-    """Return ``True`` when speech is followed by ≥400 ms of silence."""
+    """Return ``True`` when speech is followed by >=400 ms of silence."""
     return state["has_speech"] and state["silence_ms"] >= 400
 
 
@@ -447,7 +447,8 @@ async def _maybe_infer_and_emit(ws: WebSocket, setup: SetupMessage, state: Sessi
     Run S2ST on buffered audio and emit the translated waveform.
 
     The buffer is cleared and the VAD instance is re-created after each
-    successful inference to avoid cross-utterance artifacts.
+    successful inference to avoid cross-utterance artifacts. Segments
+    shorter than 100 ms are discarded to avoid spurious translations.
     """
     if not state["buffer_pcm16_16k"] or not state["has_speech"]:
         state["buffer_pcm16_16k"].clear()
@@ -461,6 +462,16 @@ async def _maybe_infer_and_emit(ws: WebSocket, setup: SetupMessage, state: Sessi
     # Concatenate buffered frames and clear
     wave_16k = torch.cat(state["buffer_pcm16_16k"])  # shape (T,)
     state["buffer_pcm16_16k"].clear()
+
+    # Skip extremely short segments (<0.1 s)
+    min_samples = int(0.1 * 16000)
+    if wave_16k.numel() < min_samples:
+        logger.info("Dropping short utterance: samples=%d", wave_16k.numel())
+        state["has_speech"] = False
+        state["silence_ms"] = 0
+        if state["vad"] is not None:
+            state["vad"] = make_vad(state["vad_aggr"])
+        return
 
     # Inference
     start = asyncio.get_event_loop().time()
