@@ -2,6 +2,8 @@
 
 Requires [uv](https://github.com/astral-sh/uv)
 
-Setup: `uv sync`
+Setup: `uv sync --extra gpu-rocm`
+
+Setup, chatgpt.com/codex: `uv sync --extra cpu`
 
 Run: `./run.sh`

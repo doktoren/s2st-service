@@ -1,7 +1,7 @@
 [project]
 name = "seamless-s2st-ws"
 version = "0.1.0"
-description = "FastAPI WebSocket speech-to-speech translation using SeamlessM4T-V2-Large (ROCm-ready)"
+description = "FastAPI WebSocket speech-to-speech translation (CPU or ROCm)"
 authors = [{ name = "Jesper", email = "jespertk@gmail.com" }]
 requires-python = ">=3.13,<3.14"
 readme = "README.md"
@@ -22,6 +22,20 @@ dependencies = [
     "sentencepiece>=0.2.1",
     "tiktoken>=0.11.0",
 ]
+
+[project.optional-dependencies]
+# Plain CPU wheels from PyPI. Keep torch/torchaudio versions matched.
+cpu = [
+    "torch==2.8.0",
+    "torchaudio==2.8.0",
+]
+# ROCm wheels + Triton, pinned to matching versions.
+gpu-rocm = [
+    "torch==2.8.0+rocm6.3",
+    "torchaudio==2.8.0+rocm6.3",
+    "pytorch-triton-rocm==3.4.0",
+]
+ 
 [dependency-groups]
 dev = [
     "mypy>=1.17.1,<2.0.0",

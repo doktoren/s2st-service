@@ -2,7 +2,7 @@
 
 This project includes AI components. Follow these best practices to ensure consistency, efficiency, and ethical AI development.
 
-Ignore everything in the dumpyard directory. Ignore `./STATUS.md`. Ignore any TODO comments unless you've been told otherwise.
+Ignore any TODO comments unless you've been told otherwise.
 
 ## General Principles
 
