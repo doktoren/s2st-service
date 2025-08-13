@@ -6,9 +6,6 @@ authors = [{ name = "Jesper", email = "jespertk@gmail.com" }]
 requires-python = ">=3.13,<3.14"
 readme = "README.md"
 dependencies = [
-    "torch==2.8.0+rocm6.3",
-    "torchaudio==2.8.0+rocm6.3",
-    "pytorch-triton-rocm==3.4.0",
     "fastapi>=0.116.1",
     "uvicorn[standard]>=0.35",
     "pydantic>=2.11.7",
