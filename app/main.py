@@ -333,7 +333,7 @@ async def ws_handler(ws: WebSocket) -> None:  # noqa: C901, PLR0912, PLR0915
         return
 
     # Prepare session state
-    vad_aggr = int(setup.chunking.get("vad_aggressiveness", 2))
+    vad_aggr = int(setup.chunking.get("vad_aggressiveness", 1))
     state: SessionState = {
         "audio_format": setup.audio_format,
         "strategy": strategy,
@@ -465,7 +465,7 @@ async def _handle_audio_msg(msg: AudioMessage, setup: SetupMessage, state: Sessi
 
 
 def _vad_segment_closed(state: SessionState) -> bool:
-    """Heuristic: after accumulating frames, detect end-of-utterance with tail silence."""
+    """Return ``True`` when the buffered audio ends with 400 ms of silence."""
     vad = state["vad"]
     if vad is None:
         return False
@@ -474,24 +474,26 @@ def _vad_segment_closed(state: SessionState) -> bool:
     if buf is None or buf.numel() == 0:
         return False
 
-    # Analyze last 400 ms for silence tail
-    tail_ms = 400
+    # Analyze up to the last 800 ms for trailing silence
+    tail_ms = 800
     samples_tail = int(16000 * tail_ms / 1000)
-    if buf.numel() < samples_tail:
-        return False
-    tail = buf[-samples_tail:]
+    tail = buf[-samples_tail:] if buf.numel() >= samples_tail else buf
 
-    # Slice into 20 ms frames and check VAD
+    # Slice into frames and require consecutive non-speech totaling 400+ ms
     frame_len = int(16000 * frame_ms / 1000)
-    silent_frames = 0
+    silent_run = 0
+    needed_ms = 400
     for i in range(0, tail.numel() - frame_len + 1, frame_len):
         frame = tail[i : i + frame_len]
         pcm_bytes = AudioUtils.tensor_to_pcm16_bytes_mono(frame)
         is_speech = vad.is_speech(pcm_bytes, 16000)
-        if not is_speech:
-            silent_frames += 1
-    # Consider end when last 200+ ms are non-speech
-    return silent_frames * frame_ms >= 200
+        if is_speech:
+            silent_run = 0
+        else:
+            silent_run += frame_ms
+            if silent_run >= needed_ms:
+                return True
+    return False
 
 
 async def _maybe_infer_and_emit(ws: WebSocket, setup: SetupMessage, state: SessionState) -> None:
