@@ -261,6 +261,8 @@ class SessionState(TypedDict):
     vad_aggr: int
     buffer_pcm16_16k: list[torch.Tensor]
     utterance_seq: int
+    has_speech: bool
+    silence_ms: int
 
 
 def make_vad(aggr: int) -> webrtcvad.Vad:
@@ -323,6 +325,8 @@ async def ws_handler(ws: WebSocket) -> None:  # noqa: C901, PLR0912, PLR0915
         "vad_aggr": vad_aggr,
         "buffer_pcm16_16k": [],
         "utterance_seq": 0,
+        "has_speech": False,
+        "silence_ms": 0,
     }
 
     # Send ready (negotiate)
@@ -384,12 +388,16 @@ async def ws_handler(ws: WebSocket) -> None:  # noqa: C901, PLR0912, PLR0915
     except WebSocketDisconnect:
         # Drop any leftovers if the client vanishes mid-utterance
         state["buffer_pcm16_16k"].clear()
+        state["has_speech"] = False
+        state["silence_ms"] = 0
     except Exception as exc:
         logger.exception("Server error")
         await ws.send_text(ErrorMessage(type="error", code="server_error", message=str(exc)).model_dump_json())
     finally:
         # Always clear per-connection buffers
         state["buffer_pcm16_16k"].clear()
+        state["has_speech"] = False
+        state["silence_ms"] = 0
         # Client may have already initiated close; suppress double-close errors
         with suppress(Exception):
             await ws.close()
@@ -401,7 +409,7 @@ async def ws_handler(ws: WebSocket) -> None:  # noqa: C901, PLR0912, PLR0915
 
 
 async def _handle_audio_msg(msg: AudioMessage, setup: SetupMessage, state: SessionState) -> None:
-    """Decode incoming frame, convert to 16 kHz PCM float, append to session buffer."""
+    """Decode incoming frame, update VAD state and buffer speech."""
     # Validate frame duration
     if msg.duration_ms != 20:
         error_msg = "server_vad requires duration_ms == 20 for every frame"
@@ -418,38 +426,20 @@ async def _handle_audio_msg(msg: AudioMessage, setup: SetupMessage, state: Sessi
     else:
         tens = AudioUtils.pcm16_bytes_to_tensor_mono(data)
         wave_16k = tens if fmt.sample_rate == 16000 else AudioUtils.resample(tens, fmt.sample_rate, 16000)
-
-    state["buffer_pcm16_16k"].append(wave_16k)
+    pcm_bytes_16k = AudioUtils.tensor_to_pcm16_bytes_mono(wave_16k)
+    is_speech = state["vad"].is_speech(pcm_bytes_16k, 16000)
+    if is_speech:
+        state["has_speech"] = True
+        state["silence_ms"] = 0
+    else:
+        state["silence_ms"] += state["vad_frame_ms"]
+    if state["has_speech"]:
+        state["buffer_pcm16_16k"].append(wave_16k)
 
 
 def _vad_segment_closed(state: SessionState) -> bool:
-    """Return ``True`` when the buffered audio ends with 400 ms of silence."""
-    vad = state["vad"]
-    frame_ms = state["vad_frame_ms"]
-    buf = torch.cat(state["buffer_pcm16_16k"]) if state["buffer_pcm16_16k"] else None
-    if buf is None or buf.numel() == 0:
-        return False
-
-    # Analyze up to the last 800 ms for trailing silence
-    tail_ms = 800
-    samples_tail = int(16000 * tail_ms / 1000)
-    tail = buf[-samples_tail:] if buf.numel() >= samples_tail else buf
-
-    # Slice into frames and require consecutive non-speech totaling 400+ ms
-    frame_len = int(16000 * frame_ms / 1000)
-    silent_run = 0
-    needed_ms = 400
-    for i in range(0, tail.numel() - frame_len + 1, frame_len):
-        frame = tail[i : i + frame_len]
-        pcm_bytes = AudioUtils.tensor_to_pcm16_bytes_mono(frame)
-        is_speech = vad.is_speech(pcm_bytes, 16000)
-        if is_speech:
-            silent_run = 0
-        else:
-            silent_run += frame_ms
-            if silent_run >= needed_ms:
-                return True
-    return False
+    """Return ``True`` when speech is followed by ≥400 ms of silence."""
+    return state["has_speech"] and state["silence_ms"] >= 400
 
 
 async def _maybe_infer_and_emit(ws: WebSocket, setup: SetupMessage, state: SessionState) -> None:
@@ -459,7 +449,10 @@ async def _maybe_infer_and_emit(ws: WebSocket, setup: SetupMessage, state: Sessi
     The buffer is cleared and the VAD instance is re-created after each
     successful inference to avoid cross-utterance artifacts.
     """
-    if not state["buffer_pcm16_16k"]:
+    if not state["buffer_pcm16_16k"] or not state["has_speech"]:
+        state["buffer_pcm16_16k"].clear()
+        state["has_speech"] = False
+        state["silence_ms"] = 0
         return
 
     utterance_id = f"utt-{state['utterance_seq']}"
@@ -516,5 +509,7 @@ async def _maybe_infer_and_emit(ws: WebSocket, setup: SetupMessage, state: Sessi
     # Reset VAD state so that previous utterances do not influence the
     # next segment.  WebRTC VAD keeps an internal state machine and may
     # mis-classify initial frames if not re-instantiated.
+    state["has_speech"] = False
+    state["silence_ms"] = 0
     if state["vad"] is not None:
         state["vad"] = make_vad(state["vad_aggr"])
