@@ -42,9 +42,9 @@ dev = [
 [tool.uv]
 # Ensures editable install behavior and deterministic resolution.
 index-strategy = "unsafe-best-match"
-# ROCm wheels are only needed when installing the optional ``gpu-rocm``
-# extra.  Installers should provide ``UV_EXTRA_INDEX_URL`` themselves so
-# that normal dev dependencies (such as ``mypy``) resolve from PyPI.
+extra-index-url = [
+    "https://download.pytorch.org/whl/rocm6.3",
+]
 
 [tool.ruff]
 line-length = 120
