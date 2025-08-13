@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8" />
+<title>S2ST Demo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root { font-family: system-ui, sans-serif; }
+  body { margin: 1.5rem; max-width: 900px; }
+  label { margin-right: .5rem; }
+  input, button { font: inherit; padding: .4rem .6rem; }
+  button { margin-right: .5rem; }
+  #log { margin-top: 1rem; white-space: pre-wrap; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; border: 1px solid #ddd; padding: .75rem; border-radius: .5rem; height: 14rem; overflow: auto; }
+</style>
+
+<body>
+  <div>
+    <label>WS URL</label>
+    <input id="wsurl" size="40" value="ws://localhost:8000/ws" />
+  </div>
+  <div style="margin-top:.5rem">
+    <label>Target</label><input id="tgt" value="en" size="6" />
+    <button id="start">Start</button>
+    <button id="stop" disabled>Stop</button>
+  </div>
+  <div id="log"></div>
+
+<script>
+
+// Map ISO-639-1 / BCP-47 to SeamlessM4T v2 speech codes (ISO-639-3 / model ids)
+function toSeamlessLang(code, {target=false} = {}) {
+  if (!code) return code;
+  const c = code.toLowerCase();
+  const map = {
+    // Nordics
+    da: "dan", sv: "swe", nb: "nob", nn: "nno", no: "nob", is: "isl", fi: "fin",
+    // Big ones
+    en: "eng", de: "deu", fr: "fra", es: "spa", pt: "por", it: "ita", nl: "nld",
+    pl: "pol", cs: "ces", sk: "slk", sl: "slv", hr: "hrv", sr: "srp", ro: "ron",
+    bg: "bul", ru: "rus", uk: "ukr", tr: "tur", el: "ell", hu: "hun",
+    // Balkans/Baltics
+    bs: "bos", sq: "als",  // note: model uses 'bos'; 'als' (Tosk Albanian) may be unsupported for speech
+    lv: "lvs", lt: "lit", et: "est",
+    // Asian
+    zh: "cmn", "zh-cn": "cmn", "zh-hans": "cmn", "zh-hant": "cmn_Hant", "zh-tw": "cmn_Hant",
+    yue: "yue", ja: "jpn", ko: "kor", hi: "hin", id: "ind", ms: "zlm", th: "tha", vi: "vie",
+    // Semitic
+    he: "heb", ar: "arb",
+    // Others seen in the model list
+    fa: "pes", ur: "urd", az: "azj", kk: "kaz", ky: "kir", uz: "uzn",
+  };
+  if (c === "auto") return "auto";        // let server handle detection for source only
+  if (map[c]) return map[c];
+  // Pass through 3-letter codes if user already typed them
+  if (c.length === 3) return c;
+  return c; // last resort (server will error with a clear message)
+}
+
+const log = (...a) => { const el = document.getElementById("log"); el.textContent += a.join(" ") + "\n"; el.scrollTop = el.scrollHeight; };
+
+let ctx, mediaStream, sourceNode, workletNode, sink, ws, seq = 0, playingCtx, framesSent = 0;
+let opened = false;
+
+document.getElementById("start").onclick = start;
+// Prevent double-clicks creating two sessions
+document.getElementById("start").addEventListener("click", e => e.target.disabled = true);
+document.getElementById("stop").onclick = stop;
+
+async function start() {
+  // If a previous session exists, stop it first to avoid leaking mic/audio state.
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    try { ws.close(); } catch {}
+  }
+  try { await stop(); } catch {}
+
+  const WS_URL = document.getElementById("wsurl").value.trim();
+  const tgtLangIn = document.getElementById("tgt").value.trim() || "en";
+  const tgtLang = toSeamlessLang(tgtLangIn, {target:true});
+  seq = 0; framesSent = 0;
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    alert("getUserMedia unavailable. Use https or http://localhost.");
+    return;
+  }
+
+  // Audio capture
+  ctx = new (window.AudioContext || window.webkitAudioContext)(); // device rate
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false
+      }
+    });
+  } catch (e) {
+    log("Mic error:", e.message || e);
+    return;
+  }
+  sourceNode = ctx.createMediaStreamSource(mediaStream);
+  await ctx.resume();
+  log("AudioContext sampleRate =", ctx.sampleRate);
+
+  // Worklet: chunk ~20ms at device rate, resample to 16 kHz (320 samples) with linear interp
+  const workletCode = `
+    class MicProcessor extends AudioWorkletProcessor {
+      constructor() { super(); this.buf = new Float32Array(0); }
+      process(inputs) {
+        const input = inputs[0];
+        if (!input || !input[0]) return true;
+        const frame = input[0];
+        const tmp = new Float32Array(this.buf.length + frame.length);
+        tmp.set(this.buf, 0); tmp.set(frame, this.buf.length);
+        this.buf = tmp;
+
+        const srcRate = sampleRate;
+        const srcWin = Math.max(1, Math.round(srcRate * 0.02)); // ~20ms
+        while (this.buf.length >= srcWin) {
+          const chunk = this.buf.subarray(0, srcWin);
+          const dstLen = 320; // 20ms @ 16k
+          const out = new Float32Array(dstLen);
+          const ratio = (chunk.length - 1) / (dstLen - 1);
+          for (let i = 0; i < dstLen; i++) {
+            const pos = i * ratio;
+            const i0 = Math.floor(pos), i1 = Math.min(i0 + 1, chunk.length - 1);
+            const t = pos - i0;
+            out[i] = (1 - t) * chunk[i0] + t * chunk[i1];
+          }
+          this.port.postMessage(out, [out.buffer]);
+          this.buf = this.buf.subarray(srcWin);
+        }
+        return true;
+      }
+    }
+    registerProcessor('mic-proc', MicProcessor);
+  `;
+  const blob = new Blob([workletCode], { type: "application/javascript" });
+  await ctx.audioWorklet.addModule(URL.createObjectURL(blob));
+  workletNode = new AudioWorkletNode(ctx, 'mic-proc');
+  sourceNode.connect(workletNode);
+  sink = ctx.createGain(); sink.gain.value = 0;
+  workletNode.connect(sink); sink.connect(ctx.destination);
+
+  // WebSocket
+  ws = new WebSocket(WS_URL);
+  opened = false;
+
+  ws.onopen = () => {
+    opened = true;
+    log("WS connected");
+    const setup = {
+      type: "setup",
+      target_language: tgtLang,
+      audio_format: { codec: "pcm16", sample_rate: 16000, channels: 1 },
+      chunking: { strategy: "server_vad" }
+    };
+    ws.send(JSON.stringify(setup));
+  };
+
+  ws.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg.type === "ready") {
+      log("ready:", JSON.stringify(msg.negotiated));
+      // start streaming frames
+      workletNode.port.onmessage = (e) => {
+        const f32_16k = e.data; // Float32Array(320)
+        const u8 = floatToPcm16LE(f32_16k);
+        const b64 = base64FromBytes(u8);
+        const wire = { type: "audio", seq: seq++, audio_b64: b64, duration_ms: 20 };
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(wire));
+        framesSent++;
+        if (framesSent % 50 === 0) log("sent frames:", framesSent);
+      };
+    } else if (msg.type === "audio_chunk") {
+      const bytes = bytesFromBase64(msg.audio_b64);
+      playPcm16Mono(bytes, 16000);
+    } else if (msg.type === "end_of_audio") {
+      log(`end_of_audio: ${msg.utterance_id} latency=${msg.latency_ms}ms`);
+    } else if (msg.type === "error") {
+      log("error:", msg.code, msg.message);
+    }
+  };
+
+  ws.onerror = (e) => log("WS error", e?.message || e);
+  ws.onclose = (e) => {
+    log(`WS closed code=${e.code} reason=${e.reason || ""}`);
+  };
+
+  document.getElementById("start").disabled = true;
+  document.getElementById("stop").disabled = false;
+}
+
+async function stop() {
+  try {
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "end_of_segment" }));
+      ws.send(JSON.stringify({ type: "close" }));
+      ws.close();
+    }
+  } catch {}
+  try { workletNode?.disconnect(); } catch {}
+  try { sourceNode?.disconnect(); } catch {}
+  try { sink?.disconnect(); } catch {}
+  try { mediaStream?.getTracks().forEach(t => t.stop()); } catch {}
+  try { await ctx?.close(); } catch {}
+  document.getElementById("start").disabled = false;
+  document.getElementById("stop").disabled = true;
+}
+
+function floatToPcm16LE(f32) {
+  const b = new Int16Array(f32.length);
+  for (let i = 0; i < f32.length; i++) {
+    let s = f32[i];
+    if (s > 1) s = 1; else if (s < -1) s = -1;
+    b[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  }
+  return new Uint8Array(b.buffer);
+}
+
+function base64FromBytes(u8) {
+  let bin = "";
+  for (let i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]);
+  return btoa(bin);
+}
+
+function bytesFromBase64(b64) {
+  const bin = atob(b64);
+  const u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return u8;
+}
+
+function playPcm16Mono(u8, sampleRate) {
+  const len = u8.byteLength / 2;
+  const f32 = new Float32Array(len);
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  for (let i = 0; i < len; i++) {
+    const s = dv.getInt16(i * 2, true);
+    f32[i] = s / 0x8000;
+  }
+  if (!playingCtx) playingCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate });
+  const buf = playingCtx.createBuffer(1, f32.length, sampleRate);
+  buf.copyToChannel(f32, 0, 0);
+  const src = playingCtx.createBufferSource();
+  src.buffer = buf;
+  src.connect(playingCtx.destination);
+  src.start();
+}
+</script>
+</body>
+</html>

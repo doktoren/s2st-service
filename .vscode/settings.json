@@ -1,0 +1,21 @@
+{
+    "[python]": {
+        "editor.formatOnSave": true,
+        "editor.formatOnSaveMode": "file",
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.wordBasedSuggestions": "off",
+        "editor.codeActionsOnSave": {
+            "source.unusedImports": "never",  // overridden by "source.fixAll": "always"
+            "source.organizeImports": "always",
+            "source.fixAll": "always",
+        },
+        "editor.detectIndentation": false,
+        "editor.insertSpaces": true,
+        "editor.tabSize": 4,
+    },
+    "python.defaultInterpreterPath": ".venv/bin/python",
+    "python.languageServer": "Pylance",
+    "python.terminal.activateEnvironment": true,
+    "ruff.enable": true,
+    "ruff.path": [".venv/bin/ruff"]
+}

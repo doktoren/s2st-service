@@ -1,0 +1,46 @@
+[project]
+name = "seamless-s2st-ws"
+version = "0.1.0"
+description = "FastAPI WebSocket speech-to-speech translation using SeamlessM4T-V2-Large (ROCm-ready)"
+authors = [{ name = "Jesper", email = "jespertk@gmail.com" }]
+requires-python = ">=3.13,<3.14"
+readme = "README.md"
+dependencies = [
+    "torch==2.8.0+rocm6.3",
+    "torchaudio==2.8.0+rocm6.3",
+    "pytorch-triton-rocm==3.4.0",
+    "fastapi>=0.116.1",
+    "uvicorn[standard]>=0.35",
+    "pydantic>=2.11.7",
+    "numpy>=2.3.2,<2.4.0",
+    "transformers>=4.55.1,<4.58",
+    "webrtcvad>=2.0.10",
+    "soundfile>=0.13.1",
+    "g711>=1.0.0",
+    "orjson>=3.11.2",
+    "protobuf>=6.31.1",
+    "sentencepiece>=0.2.1",
+    "tiktoken>=0.11.0",
+]
+[dependency-groups]
+dev = [
+    "mypy>=1.17.1,<2.0.0",
+    "ruff>=0.12.8,<1",
+]
+
+[tool.uv]
+# Ensures editable install behavior and deterministic resolution.
+index-strategy = "unsafe-best-match"
+extra-index-url = [
+    "https://download.pytorch.org/whl/rocm6.3",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.pyright]
+pythonVersion = "3.13"
+
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
