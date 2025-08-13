@@ -50,6 +50,15 @@ workspace warnings on ROCm systems:
 Once running, connect a client to `ws://localhost:8000/ws` and start sending
 audio messages as described in `app/main.py`.
 
+## Intended streaming behavior
+
+* Once the test page is started it opens a WebSocket connection and streams audio in 20 ms chunks to the server.
+* The backend performs voice activity detection on the incoming frames.
+* When a pause is detected, the buffered speech is forwarded to the model for translation.
+* As soon as translated audio is available—even partially—the server streams it back to the browser.  The server may send audio faster than real time; the client should play it at normal speed until finished.
+* While a translation is running the server should avoid beginning another one by pausing WebSocket reads or otherwise ensuring that only one translation is in flight.
+* Clicking stop on the test page should send roughly one second of silence so the final segment triggers VAD processing.
+
 ## Development workflow
 
 * `./lint.sh` – install dev dependencies, run `ruff` and `mypy`.
