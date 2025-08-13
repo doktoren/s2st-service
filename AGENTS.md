@@ -9,7 +9,9 @@ Ignore any TODO comments unless you've been told otherwise.
 Always generate code for the version of Python and 3rd party packages specified in `./pyproject.toml`
 Prefer using syntax from newer versions. For example prefer `my_list: list[str]` over `my_list: List[str]`.
 
-If possible, you should verify your changes by running `./lint.sh`
+If possible, you should verify your changes by running `./lint.sh`.
+Note that `./lint.sh` may take a long time to finish during its first invocation.
+You may choose to only do the first part (`uv run ruff check`).
 
 The code must pass strict type checking (`strict = True`). See `./mypy.ini` for details.
 This means that you must add full type annotations to e.g. function arguments and return types.
