@@ -497,7 +497,12 @@ def _vad_segment_closed(state: SessionState) -> bool:
 
 
 async def _maybe_infer_and_emit(ws: WebSocket, setup: SetupMessage, state: SessionState) -> None:
-    """Run S2ST on the buffered audio (if any) and stream the result back in the negotiated format."""
+    """
+    Run S2ST on buffered audio and emit the translated waveform.
+
+    The buffer is cleared and the VAD instance is re-created after each
+    successful inference to avoid cross-utterance artifacts.
+    """
     if not state["buffer_pcm16_16k"]:
         return
 
@@ -564,3 +569,9 @@ async def _maybe_infer_and_emit(ws: WebSocket, setup: SetupMessage, state: Sessi
     await ws.send_text(
         EndOfAudioMessage(type="end_of_audio", utterance_id=utterance_id, latency_ms=latency_ms).model_dump_json()
     )
+
+    # Reset VAD state so that previous utterances do not influence the
+    # next segment.  WebRTC VAD keeps an internal state machine and may
+    # mis-classify initial frames if not re-instantiated.
+    if state["vad"] is not None:
+        state["vad"] = make_vad(state["vad_aggr"])
