@@ -1,6 +1,6 @@
 version = 1
 revision = 2
-requires-python = ">=3.13.5, <3.14"
+requires-python = "==3.13.*"
 
 [[package]]
 name = "annotated-types"
@@ -539,15 +539,23 @@ dependencies = [
     { name = "orjson" },
     { name = "protobuf" },
     { name = "pydantic" },
-    { name = "pytorch-triton-rocm" },
     { name = "sentencepiece" },
     { name = "soundfile" },
     { name = "tiktoken" },
-    { name = "torch" },
-    { name = "torchaudio" },
     { name = "transformers" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "webrtcvad" },
+]
+
+[package.optional-dependencies]
+cpu = [
+    { name = "torch" },
+    { name = "torchaudio" },
+]
+gpu-rocm = [
+    { name = "pytorch-triton-rocm" },
+    { name = "torch" },
+    { name = "torchaudio" },
 ]
 
 [package.dev-dependencies]
@@ -564,16 +572,19 @@ requires-dist = [
     { name = "orjson", specifier = ">=3.11.2" },
     { name = "protobuf", specifier = ">=6.31.1" },
     { name = "pydantic", specifier = ">=2.11.7" },
-    { name = "pytorch-triton-rocm", specifier = "==3.4.0" },
+    { name = "pytorch-triton-rocm", marker = "extra == 'gpu-rocm'", specifier = "==3.4.0" },
     { name = "sentencepiece", specifier = ">=0.2.1" },
     { name = "soundfile", specifier = ">=0.13.1" },
     { name = "tiktoken", specifier = ">=0.11.0" },
-    { name = "torch", specifier = "==2.8.0+rocm6.3" },
-    { name = "torchaudio", specifier = "==2.8.0+rocm6.3" },
+    { name = "torch", marker = "extra == 'cpu'", specifier = "==2.8.0" },
+    { name = "torch", marker = "extra == 'gpu-rocm'", specifier = "==2.8.0+rocm6.3" },
+    { name = "torchaudio", marker = "extra == 'cpu'", specifier = "==2.8.0" },
+    { name = "torchaudio", marker = "extra == 'gpu-rocm'", specifier = "==2.8.0+rocm6.3" },
     { name = "transformers", specifier = ">=4.55.1,<4.58" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.35" },
     { name = "webrtcvad", specifier = ">=2.0.10" },
 ]
+provides-extras = ["cpu", "gpu-rocm"]
 
 [package.metadata.requires-dev]
 dev = [

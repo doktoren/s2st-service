@@ -23,3 +23,7 @@ Even when e.g. the function name makes the usage clear you need to add this repe
 
 It is not enought for code to be correct. The code must be as pythonic as possible.
 If it's possible to simplify then do so.
+
+## Testing
+
+Do NOT try to run the python program. Only do linting.
