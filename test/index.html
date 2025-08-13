@@ -194,7 +194,12 @@ async function start() {
 async function stop() {
   try {
     if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "end_of_segment" }));
+      const silence = new Float32Array(320);
+      const u8 = floatToPcm16LE(silence);
+      const b64 = base64FromBytes(u8);
+      for (let i = 0; i < 50; i++) {
+        ws.send(JSON.stringify({ type: "audio", seq: seq++, audio_b64: b64, duration_ms: 20 }));
+      }
       ws.send(JSON.stringify({ type: "close" }));
       ws.close();
     }

@@ -6,9 +6,7 @@ FastAPI WebSocket S2ST service using SeamlessM4T-V2-Large.
   * g711_ulaw mono @ 8000 Hz
   * pcm16 mono @ 16000 Hz
   * pcm16 mono @ 24000 Hz
-- Two chunking strategies:
-  * server_vad: client sends 20 ms frames; server segments with VAD
-  * client_chunked: client sends frames then an explicit end_of_segment; each segment is translated individually
+- Client sends 20 ms audio frames and the server segments with VAD.
 
 This module targets Python 3.13 and strict typing/mypy.
 """
@@ -50,13 +48,6 @@ class Codec(str, Enum):
     PCM16 = "pcm16"
 
 
-class ChunkingStrategy(str, Enum):
-    """Chunking strategies supported by the server."""
-
-    SERVER_VAD = "server_vad"
-    CLIENT_CHUNKED = "client_chunked"
-
-
 class AudioFormat(BaseModel):
     """
     Audio format negotiated with the client.
@@ -87,19 +78,12 @@ class AudioMessage(BaseModel):
     duration_ms: int
 
 
-class EndOfSegmentMessage(BaseModel):
-    """Marks the end of a client-chunked segment."""
-
-    type: Literal["end_of_segment"] = "end_of_segment"
-
-
 class CloseMessage(BaseModel):
     """Client intends to close the session."""
 
     type: Literal["close"] = "close"
 
-
-IncomingMessage = RootModel[SetupMessage | AudioMessage | EndOfSegmentMessage | CloseMessage]
+IncomingMessage = RootModel[SetupMessage | AudioMessage | CloseMessage]
 
 
 class ReadyMessage(BaseModel):
@@ -272,8 +256,7 @@ class SeamlessEngine:
 
 class SessionState(TypedDict):
     audio_format: AudioFormat
-    strategy: ChunkingStrategy
-    vad: webrtcvad.Vad | None
+    vad: webrtcvad.Vad
     vad_frame_ms: int
     vad_aggr: int
     buffer_pcm16_16k: list[torch.Tensor]
@@ -318,13 +301,12 @@ async def ws_handler(ws: WebSocket) -> None:  # noqa: C901, PLR0912, PLR0915
         return
 
     # Validate chunking
-    strategy = _parse_strategy(setup.chunking)
-    if strategy is None:
+    if setup.chunking.get("strategy") != "server_vad":
         await ws.send_text(
             ErrorMessage(
                 type="error",
                 code="bad_setup",
-                message="chunking.strategy must be 'server_vad' or 'client_chunked'",
+                message="chunking.strategy must be 'server_vad'",
             ).model_dump_json()
         )
         # Client may have already initiated close; suppress double-close errors
@@ -336,8 +318,7 @@ async def ws_handler(ws: WebSocket) -> None:  # noqa: C901, PLR0912, PLR0915
     vad_aggr = int(setup.chunking.get("vad_aggressiveness", 1))
     state: SessionState = {
         "audio_format": setup.audio_format,
-        "strategy": strategy,
-        "vad": make_vad(vad_aggr) if strategy is ChunkingStrategy.SERVER_VAD else None,
+        "vad": make_vad(vad_aggr),
         "vad_frame_ms": 20,
         "vad_aggr": vad_aggr,
         "buffer_pcm16_16k": [],
@@ -345,14 +326,10 @@ async def ws_handler(ws: WebSocket) -> None:  # noqa: C901, PLR0912, PLR0915
     }
 
     # Send ready (negotiate)
-    chunking: dict[str, Any]
-    if strategy is ChunkingStrategy.SERVER_VAD:
-        chunking = {
-            "strategy": "server_vad",
-            "vad": {"aggressiveness": state["vad_aggr"], "frame_ms": state["vad_frame_ms"]},
-        }
-    else:
-        chunking = {"strategy": "client_chunked", "max_segment_ms": 60000}
+    chunking: dict[str, Any] = {
+        "strategy": "server_vad",
+        "vad": {"aggressiveness": state["vad_aggr"], "frame_ms": state["vad_frame_ms"]},
+    }
     negotiated = {
         "audio_format": setup.audio_format.model_dump(),
         "model_audio": {"sample_rate": 16000},
@@ -368,25 +345,19 @@ async def ws_handler(ws: WebSocket) -> None:  # noqa: C901, PLR0912, PLR0915
                 try:
                     incoming = IncomingMessage.model_validate_json(msg["text"]).root
                 except Exception:
-                    # Some clients may send control messages as plain JSON
                     data = orjson.loads(msg["text"].encode("utf-8"))
-                    if data.get("type") == "end_of_segment":
-                        await _maybe_infer_and_emit(ws, setup, state)
-                        continue
                     if data.get("type") == "close":
+                        await _maybe_infer_and_emit(ws, setup, state)
                         break
                     await ws.send_text(
                         ErrorMessage(type="error", code="invalid_audio", message="invalid message").model_dump_json()
                     )
                     continue
 
-                if isinstance(incoming, EndOfSegmentMessage):
+                if isinstance(incoming, CloseMessage):
                     await _maybe_infer_and_emit(ws, setup, state)
-                elif isinstance(incoming, CloseMessage):
-                    # Drop any buffered audio before closing
-                    state["buffer_pcm16_16k"].clear()
                     break
-                elif isinstance(incoming, SetupMessage):
+                if isinstance(incoming, SetupMessage):
                     await ws.send_text(
                         ErrorMessage(
                             type="error",
@@ -396,7 +367,7 @@ async def ws_handler(ws: WebSocket) -> None:  # noqa: C901, PLR0912, PLR0915
                     )
                 elif isinstance(incoming, AudioMessage):
                     await _handle_audio_msg(incoming, setup, state)
-                    if state["strategy"] is ChunkingStrategy.SERVER_VAD and _vad_segment_closed(state):
+                    if _vad_segment_closed(state):
                         # In VAD mode, every 20ms frame may end an utterance
                         await _maybe_infer_and_emit(ws, setup, state)
 
@@ -429,23 +400,10 @@ async def ws_handler(ws: WebSocket) -> None:  # noqa: C901, PLR0912, PLR0915
 # ---------------------------
 
 
-def _parse_strategy(chunking: dict[str, Any]) -> ChunkingStrategy | None:
-    """Extract chunking strategy from the setup message."""
-    try:
-        strategy = chunking.get("strategy")
-        if strategy == ChunkingStrategy.SERVER_VAD.value:
-            return ChunkingStrategy.SERVER_VAD
-        if strategy == ChunkingStrategy.CLIENT_CHUNKED.value:
-            return ChunkingStrategy.CLIENT_CHUNKED
-    except Exception as e:
-        print(f"Caught and ignored exception {e}")
-    return None
-
-
 async def _handle_audio_msg(msg: AudioMessage, setup: SetupMessage, state: SessionState) -> None:
     """Decode incoming frame, convert to 16 kHz PCM float, append to session buffer."""
-    # Validate duration in server_vad
-    if state["strategy"] is ChunkingStrategy.SERVER_VAD and msg.duration_ms != 20:
+    # Validate frame duration
+    if msg.duration_ms != 20:
         error_msg = "server_vad requires duration_ms == 20 for every frame"
         raise ValueError(error_msg)
 
@@ -467,8 +425,6 @@ async def _handle_audio_msg(msg: AudioMessage, setup: SetupMessage, state: Sessi
 def _vad_segment_closed(state: SessionState) -> bool:
     """Return ``True`` when the buffered audio ends with 400 ms of silence."""
     vad = state["vad"]
-    if vad is None:
-        return False
     frame_ms = state["vad_frame_ms"]
     buf = torch.cat(state["buffer_pcm16_16k"]) if state["buffer_pcm16_16k"] else None
     if buf is None or buf.numel() == 0:
@@ -513,23 +469,10 @@ async def _maybe_infer_and_emit(ws: WebSocket, setup: SetupMessage, state: Sessi
     wave_16k = torch.cat(state["buffer_pcm16_16k"])  # shape (T,)
     state["buffer_pcm16_16k"].clear()
 
-    # Enforce max length for client_chunked
-    if state["strategy"] is ChunkingStrategy.CLIENT_CHUNKED:
-        max_samples = 16000 * 60  # 60000 ms at 16k
-        if wave_16k.numel() > max_samples:
-            await ws.send_text(
-                ErrorMessage(
-                    type="error",
-                    code="over_limit",
-                    message="segment exceeds 60000 ms",
-                ).model_dump_json()
-            )
-            return
-
     # Inference
     start = asyncio.get_event_loop().time()
     try:
-        logger.info("S2ST start: samples=%d strategy=%s", wave_16k.numel(), state["strategy"].value)
+        logger.info("S2ST start: samples=%d", wave_16k.numel())
         if bool(int(os.environ.get("BYPASS_ENGINE", "0"))):
             # Loopback for debugging
             out_16k = torch.clamp(wave_16k, -1.0, 1.0).to(torch.float32)
