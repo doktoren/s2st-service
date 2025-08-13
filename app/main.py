@@ -36,6 +36,11 @@ from transformers import AutoProcessor, SeamlessM4Tv2Model
 logger = logging.getLogger("seamless.ws")
 logging.basicConfig(level=logging.INFO)
 
+# Frames with a root-mean-square (RMS) value below this threshold are treated
+# as silence.  This helps avoid echo from the speakers being re-transcribed
+# as new speech segments.
+SILENCE_RMS_THRESHOLD = 0.01
+
 # ---------------------------
 # Protocol models
 # ---------------------------
@@ -428,6 +433,10 @@ async def _handle_audio_msg(msg: AudioMessage, setup: SetupMessage, state: Sessi
         wave_16k = tens if fmt.sample_rate == 16000 else AudioUtils.resample(tens, fmt.sample_rate, 16000)
     pcm_bytes_16k = AudioUtils.tensor_to_pcm16_bytes_mono(wave_16k)
     is_speech = state["vad"].is_speech(pcm_bytes_16k, 16000)
+    if is_speech:
+        rms = float(torch.sqrt(torch.mean(wave_16k * wave_16k)).item())
+        if rms < SILENCE_RMS_THRESHOLD:
+            is_speech = False
     if is_speech:
         state["has_speech"] = True
         state["silence_ms"] = 0
