@@ -26,4 +26,6 @@ If it's possible to simplify then do so.
 
 ## Testing
 
-Do NOT try to run the python program. Only do linting.
+You can assume that `chatgpt_codex_setup_script.sh` has been executed successfully.
+Note that this is NOT installing all dependencies for the Python backend.
+Therefore, do NOT try to run the python program - only do linting.
