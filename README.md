@@ -9,10 +9,8 @@ endpoint and receive translated audio in real time.
 ## Features
 
 * Accepts audio in `g711_ulaw` or `pcm16` with sample rates of 8, 16 or 24 kHz.
-* Two ingestion strategies:
-  * `server_vad` – send 20 ms frames and let the server perform VAD based
-    segmentation.
-  * `client_chunked` – the client explicitly signals when a segment ends.
+* Ingestion strategy: send 20 ms frames and let the server perform VAD based
+  segmentation.
 * Streams back translated audio chunks followed by an `end_of_audio` marker.
 * Python 3.13 with strict typing, `ruff` linting and `mypy` type checking.
 * Runs on CPU only or on ROCm 6.3 GPUs.
