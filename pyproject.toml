@@ -6,6 +6,7 @@ authors = [{ name = "Jesper", email = "jespertk@gmail.com" }]
 requires-python = ">=3.13,<3.14"
 readme = "README.md"
 dependencies = [
+    "audioop-lts>=0.2.2",
     "fastapi>=0.116.1",
     "uvicorn[standard]>=0.35",
     "pydantic>=2.11.7",
@@ -15,6 +16,7 @@ dependencies = [
     "soundfile>=0.13.1",
     "g711>=1.0.0",
     "orjson>=3.11.2",
+    "httpx>=0.28.1",
     "protobuf>=6.31.1",
     "sentencepiece>=0.2.1",
     "tiktoken>=0.11.0",
