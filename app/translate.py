@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from transformers import AutoProcessor, SeamlessM4Tv2Model
 
@@ -83,6 +84,13 @@ class SeamlessEngine:
 
 engine = SeamlessEngine(SeamlessConfig())
 app = FastAPI(title="Seamless S2ST HTTP")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class TranslateRequest(BaseModel):
