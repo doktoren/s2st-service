@@ -2,4 +2,3 @@
 *.egg-info
 *.pyc
 tmp.md
-uv.lock

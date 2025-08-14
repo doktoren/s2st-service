@@ -6,13 +6,6 @@ the full speech-to-speech translation pipeline locally without depending on
 any third-party cloud service.  Clients stream audio frames to the `/ws`
 endpoint and receive translated audio in real time.
 
-## Target platform
-
-Operating system: Ubuntu 24.04.3 LTS
-GPU: Sapphire Radeon RX7900XTX Pulse Gaming OC 24B
-CPU: 11th Gen Intel Core i5-1135G7 x 8
-RAM: 48 GB
-
 ## Features
 
 * Accepts audio in `g711_ulaw` or `pcm16` with sample rates of 8, 16 or 24 kHz.
@@ -42,18 +35,6 @@ group.  Install them when contributing code:
 uv pip install --group dev
 ```
 
-## Running the server
-
-The `run.sh` script launches `uvicorn` and also suppresses noisy MIOpen
-workspace warnings on ROCm systems:
-
-```bash
-./run.sh
-```
-
-Once running, connect a client to `ws://localhost:8000/ws` and start sending
-audio messages as described in `app/main.py`.
-
 ## Intended streaming behavior
 
 * Once the test page is started it opens a WebSocket connection and streams audio in 20 ms chunks to the server.
@@ -66,9 +47,26 @@ audio messages as described in `app/main.py`.
 ## Development workflow
 
 * `./lint.sh` – install dev dependencies, run `ruff` and `mypy`.
-* The main implementation lives in `app/main.py`.
-* `run.sh` starts the server with a single worker and verbose logging.
+* The translation implementation lives in `app/translate.py`.
+* `run_translate.sh` starts the server with a single worker and verbose logging.
+* The vad implementation lives in `app/vad.py`.
+* `run_vad.sh` starts the server with a single worker and verbose logging.
 
 Contributions are welcome.  Please ensure that code remains thoroughly typed
 and linted and that documentation is updated alongside code changes.
 
+
+### Target platform
+
+The author has focused on his own platform and in some cases even hard coded values:
+
+* Operating system: Ubuntu 24.04.3 LTS
+* GPU: Sapphire Radeon RX7900XTX Pulse Gaming OC 24B
+* CPU: 11th Gen Intel Core i5-1135G7 x 8
+* RAM: 48 GB
+
+The test server (`cd test && ./run.sh`) assumes that endpoints are exposed using the authors tailscale DNS name:
+
+```
+./tailscale_serve.sh
+```
