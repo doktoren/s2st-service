@@ -12,6 +12,7 @@ import torch
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from torch.nn.attention import sdpa_kernel
 from transformers import AutoProcessor, SeamlessM4Tv2ForSpeechToSpeech
 
 from .common import AudioFormat, AudioUtils, Codec
@@ -20,9 +21,23 @@ from .common import AudioFormat, AudioUtils, Codec
 os.environ.setdefault("MIOPEN_LOG_LEVEL", "1")  # 0=silent, 1=warn+err
 os.environ.setdefault("MIOPEN_DEBUG_DISABLE_WORKSPACE", "0")  # keep workspace enabled
 os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+# Additional perf hints for this platform (RDNA3/ROCm).
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+os.environ.setdefault("MIOPEN_FIND_MODE", "1")
+os.environ.setdefault("MIOPEN_FIND_ENFORCE", "2")
 
 logger = logging.getLogger("seamless.http")
 logging.basicConfig(level=logging.INFO)
+
+# Prefer fast SDPA kernels when available (no-op if unsupported).
+with contextlib.suppress(Exception):
+    sdpa_kernel(enable_math=False, enable_flash=True, enable_mem_efficient=True)
+    logger.info("Fast SDPA attention requested")
+
+# Cap CPU threads used by preprocessing/tokenization a bit.
+with contextlib.suppress(Exception):
+    torch.set_num_threads(max(1, (os.cpu_count() or 4) // 2))
+    torch.set_num_interop_threads(max(1, (os.cpu_count() or 4) // 4))
 
 logger.info(f"bf16 supported?: {torch.cuda.is_bf16_supported()}")
 
@@ -57,12 +72,20 @@ class SeamlessEngine:
         except Exception as e:
             logger.info("torch.compile not enabled: %s", e)
         logger.info("Compile after move+eval for ROCm speedups - END")
+        # Warm up once to populate MIOpen/rocBLAS/attention caches.
+        try:
+            logger.info("Warmup generate() - BEGIN")
+            sr = 16000
+            warm = torch.zeros(sr // 2, dtype=torch.float32)
+            _ = self.s2st(warm, target_language="eng")
+            logger.info("Warmup generate() - END")
+        except Exception as e:
+            logger.info("Warmup skipped: %s", e)
 
     @torch.inference_mode()
-    def s2st(self, audio_16k: torch.Tensor, target_language: str) -> torch.Tensor:
+    def s2st(self, audio_16k: torch.Tensor, target_language: str) -> torch.Tensor:  # noqa: C901, PLR0912
         """
         Speech-to-speech translation.
-
         audio_16k: Mono waveform tensor at 16 kHz in [-1, 1], CPU.
         """
         logger.info("Pin CPU tensor for faster host→device transfer")
@@ -76,17 +99,25 @@ class SeamlessEngine:
         inputs = self.processor(audios=[audio_np], sampling_rate=16000, return_tensors="pt")
 
         logger.info("Move features to GPU")
-        inputs = {k: v.to(self.cfg.device, non_blocking=True) for k, v in inputs.items()}
+        dev = self.cfg.device
+        dt = self.cfg.dtype
+        for k, v in list(inputs.items()):
+            if isinstance(v, torch.Tensor):
+                if v.is_floating_point():
+                    inputs[k] = v.to(dev, dtype=dt, non_blocking=True)
+                else:
+                    inputs[k] = v.to(dev, non_blocking=True)
 
         logger.info("Inference in mixed precision")
         # Re-enable optimized attention paths (no forced MATH backend).
         # With torch 2.8.0 this call previously crashed; on 2.7.0 it is stable.
-        with torch.autocast(device_type="cuda", dtype=self.cfg.dtype):
+        with torch.autocast(device_type="cuda", dtype=dt):
             generated = self.model.generate(
                 **inputs,
                 tgt_lang=target_language,
                 speaker_id=5,
-                # text_num_beams=1,
+                text_num_beams=1,
+                speech_num_beams=1,
                 use_cache=True,  # allow kv-cache for throughput
                 return_dict_in_generate=False,
             )

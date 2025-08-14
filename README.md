@@ -6,6 +6,13 @@ the full speech-to-speech translation pipeline locally without depending on
 any third-party cloud service.  Clients stream audio frames to the `/ws`
 endpoint and receive translated audio in real time.
 
+## Target platform
+
+Operating system: Ubuntu 24.04.3 LTS
+GPU: Sapphire Radeon RX7900XTX Pulse Gaming OC 24B
+CPU: 11th Gen Intel Core i5-1135G7 x 8
+RAM: 48 GB
+
 ## Features
 
 * Accepts audio in `g711_ulaw` or `pcm16` with sample rates of 8, 16 or 24 kHz.
