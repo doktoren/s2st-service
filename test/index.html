@@ -185,7 +185,7 @@ async function start() {
       const bytes = bytesFromBase64(msg.audio_b64);
       playPcm16Mono(bytes, 16000);
     } else if (msg.type === "end_of_audio") {
-      log(`end_of_audio: ${msg.utterance_id} latency=${msg.latency_ms}ms`);
+      log(`end_of_audio: ${msg.utterance_id} latency=${msg.latency_ms}ms src=${msg.src_duration_ms}ms tgt=${msg.tgt_duration_ms}ms`);
     } else if (msg.type === "error") {
       log("error:", msg.code, msg.message);
     }

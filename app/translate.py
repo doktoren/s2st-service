@@ -7,7 +7,7 @@ import os
 from dataclasses import dataclass
 
 import numpy as np
-import torch  # type: ignore[import-not-found]
+import torch
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from transformers import AutoProcessor, SeamlessM4Tv2Model
@@ -38,7 +38,7 @@ class SeamlessEngine:
         self.model.to(cfg.device)
         self.model.eval()
 
-    @torch.inference_mode()  # type: ignore[misc]
+    @torch.inference_mode()
     def s2st(self, audio_16k: torch.Tensor, target_language: str) -> torch.Tensor:
         """
         Speech-to-speech translation.

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import base64
 from enum import Enum
-from typing import Literal
+from typing import Literal, cast
 
 import g711
 import numpy as np
@@ -54,8 +54,8 @@ class AudioUtils:
     def ulaw_bytes_to_pcm16(bytes_in: bytes) -> np.ndarray:
         """Decode μ-law bytes to a PCM16 ``numpy`` array (mono)."""
         ulaw = np.frombuffer(bytes_in, dtype=np.uint8)
-        pcm16 = g711.ulaw.decode(ulaw)
-        return pcm16.astype(np.int16)
+        pcm16 = np.asarray(g711.ulaw.decode(ulaw), dtype=np.int16)
+        return pcm16
 
     @staticmethod
     def pcm16_to_ulaw_bytes(pcm16: np.ndarray) -> bytes:
@@ -82,4 +82,4 @@ class AudioUtils:
         if src_sr == dst_sr:
             return wave
         resampler = torchaudio.transforms.Resample(orig_freq=src_sr, new_freq=dst_sr)
-        return resampler(wave.view(1, -1)).view(-1)
+        return cast(torch.Tensor, resampler(wave.view(1, -1))).view(-1)
