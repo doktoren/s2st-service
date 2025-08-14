@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 
@@ -11,10 +12,14 @@ import torch
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from torch.nn.attention import SDPBackend, sdpa_kernel
 from transformers import AutoProcessor, SeamlessM4Tv2ForSpeechToSpeech
 
 from .common import AudioFormat, AudioUtils, Codec
+
+# Keep MIOpen warnings down while allowing workspace for best perf.
+os.environ.setdefault("MIOPEN_LOG_LEVEL", "1")  # 0=silent, 1=warn+err
+os.environ.setdefault("MIOPEN_DEBUG_DISABLE_WORKSPACE", "0")  # keep workspace enabled
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 
 logger = logging.getLogger("seamless.http")
 logging.basicConfig(level=logging.INFO)
@@ -40,8 +45,7 @@ class SeamlessEngine:
         self.model = (
             SeamlessM4Tv2ForSpeechToSpeech.from_pretrained(
                 cfg.model_id,
-                torch_dtype=torch.float16,  # cfg.dtype,
-                attn_implementation="eager",  # sidestep SDPA dispatch entirely
+                torch_dtype=cfg.dtype,  # use bf16 on RDNA3+, else fp16
             )
             .to(cfg.device)
             .eval()
@@ -62,7 +66,11 @@ class SeamlessEngine:
         audio_16k: Mono waveform tensor at 16 kHz in [-1, 1], CPU.
         """
         logger.info("Pin CPU tensor for faster host→device transfer")
-        audio_np = audio_16k.cpu().numpy() if audio_16k.is_cuda else audio_16k.contiguous().pin_memory().numpy()
+        audio_tensor = audio_16k.contiguous()
+        if not audio_tensor.is_cuda:
+            with contextlib.suppress(Exception):
+                audio_tensor = audio_tensor.pin_memory()
+        audio_np = audio_tensor.cpu().numpy()
 
         logger.info("Processor runs on CPU")
         inputs = self.processor(audios=[audio_np], sampling_rate=16000, return_tensors="pt")
@@ -71,25 +79,27 @@ class SeamlessEngine:
         inputs = {k: v.to(self.cfg.device, non_blocking=True) for k, v in inputs.items()}
 
         logger.info("Inference in mixed precision")
-        with torch.autocast(device_type="cuda", dtype=torch.float16), sdpa_kernel(SDPBackend.MATH):
-            # With torch version 2.8.0 this call does a hard kill of the program
+        # Re-enable optimized attention paths (no forced MATH backend).
+        # With torch 2.8.0 this call previously crashed; on 2.7.0 it is stable.
+        with torch.autocast(device_type="cuda", dtype=self.cfg.dtype):
             generated = self.model.generate(
                 **inputs,
                 tgt_lang=target_language,
-                text_num_beams=1,
-                use_cache=False,
+                speaker_id=5,
+                # text_num_beams=1,
+                use_cache=True,  # allow kv-cache for throughput
                 return_dict_in_generate=False,
             )
 
         logger.info("Handle different output formats")
         if isinstance(generated, torch.Tensor):
-            out = generated[0].to("cpu")
+            out = generated[0].to("cpu", dtype=torch.float32)
         elif isinstance(generated, dict):
             for k in ("waveform", "audio_values", "audio"):
                 if k in generated:
                     t = generated[k]
                     if isinstance(t, torch.Tensor):
-                        out = (t[0] if t.ndim > 1 else t).to("cpu")
+                        out = (t[0] if t.ndim > 1 else t).to("cpu", dtype=torch.float32)
                     else:
                         arr = t[0] if hasattr(t, "__getitem__") else t
                         out = torch.as_tensor(arr, dtype=torch.float32)
