@@ -15,7 +15,6 @@ dependencies = [
     "webrtcvad>=2.0.10",
     "soundfile>=0.13.1",
     "g711>=1.0.0",
-    "orjson>=3.11.2",
     "httpx>=0.28.1",
     "protobuf>=6.31.1",
     "sentencepiece>=0.2.1",
