@@ -110,14 +110,16 @@ class ErrorMessage(BaseModel):
 # Session handling
 # ---------------------------
 
+SPEECH_STREAK_COUNT_THRESHOLD = 3
+
 
 @dataclass
 class SessionState:
     vad: webrtcvad.Vad
     vad_aggr: int
-    buffer_pcm16_16k: list[bytes]
     utterance_seq: int
-    has_speech: bool
+    buffer_pcm16_16k: list[bytes]
+    speech_streak_count: int
     silence_ms: int
 
 
@@ -165,19 +167,23 @@ async def _handle_audio_msg(msg: AudioMessage, setup: SetupMessage, state: Sessi
         rms = audioop.rms(pcm16k, 2)
         if rms < 330:  # ~0.01 in int16 units
             is_speech = False
+
+    state.buffer_pcm16_16k.append(pcm16k)
     if is_speech:
-        state.has_speech = True
+        state.speech_streak_count += 1
         state.silence_ms = 0
-    elif state.has_speech:
+    elif state.speech_streak_count < SPEECH_STREAK_COUNT_THRESHOLD:
+        state.speech_streak_count = 0
+        state.silence_ms = 0
+        state.buffer_pcm16_16k.clear()
+    else:
         state.silence_ms += 20
-    if state.has_speech:
-        state.buffer_pcm16_16k.append(pcm16k)
 
 
 async def _maybe_infer_and_emit(ws: WebSocket, setup: SetupMessage, state: SessionState) -> None:
     """Send buffered audio to the translation service and emit the result."""
     try:
-        if not state.buffer_pcm16_16k or not state.has_speech:
+        if state.speech_streak_count < SPEECH_STREAK_COUNT_THRESHOLD:
             return
 
         utterance_id = f"utt-{state.utterance_seq}"
@@ -228,9 +234,8 @@ async def _maybe_infer_and_emit(ws: WebSocket, setup: SetupMessage, state: Sessi
 
     finally:
         state.buffer_pcm16_16k.clear()
-        state.has_speech = False
+        state.speech_streak_count = False
         state.silence_ms = 0
-        state.vad = make_vad(state.vad_aggr)
 
 
 @app.websocket("/ws")
@@ -253,7 +258,7 @@ async def ws_handler(ws: WebSocket) -> None:  # noqa: C901
         vad_aggr=vad_aggr,
         buffer_pcm16_16k=[],
         utterance_seq=0,
-        has_speech=False,
+        speech_streak_count=0,
         silence_ms=0,
     )
 
@@ -279,9 +284,9 @@ async def ws_handler(ws: WebSocket) -> None:  # noqa: C901
                     await _handle_audio_msg(incoming, setup, state)
                     logger.info(
                         f"Now state is len={len(state.buffer_pcm16_16k)}, "
-                        f"has_speech={state.has_speech}, silence_ms={state.silence_ms}"
+                        f"speech_streak_count={state.speech_streak_count}, silence_ms={state.silence_ms}"
                     )
-                    if state.has_speech and state.silence_ms >= 400:
+                    if state.silence_ms >= 400:
                         await _maybe_infer_and_emit(ws, setup, state)
 
             elif "bytes" in msg and msg["bytes"] is not None:
@@ -295,7 +300,7 @@ async def ws_handler(ws: WebSocket) -> None:  # noqa: C901
                 break
     except WebSocketDisconnect:
         state.buffer_pcm16_16k.clear()
-        state.has_speech = False
+        state.speech_streak_count = 0
         state.silence_ms = 0
     except Exception as exc:  # pragma: no cover - unexpected failure
         logger.exception("Server error")
