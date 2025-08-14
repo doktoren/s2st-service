@@ -25,14 +25,14 @@ dependencies = [
 [project.optional-dependencies]
 # Plain CPU wheels from PyPI. Keep torch/torchaudio versions matched.
 cpu = [
-    "torch==2.8.0",
-    "torchaudio==2.8.0",
+    "torch==2.7.0",
+    "torchaudio==2.7.0",
 ]
 # ROCm wheels + Triton, pinned to matching versions.
 gpu-rocm = [
-    "torch==2.8.0+rocm6.4",
-    "torchaudio==2.8.0+rocm6.4",
-    "pytorch-triton-rocm==3.4.0",
+    "torch==2.7.0+rocm6.3", # Do NOT update to 2.8.0 as it will crash
+    "torchaudio==2.7.0+rocm6.3",
+    "pytorch-triton-rocm>=3.0.0",
 ]
 
 [dependency-groups]
@@ -45,7 +45,7 @@ dev = [
 # Ensures editable install behavior and deterministic resolution.
 index-strategy = "unsafe-best-match"
 extra-index-url = [
-    "https://download.pytorch.org/whl/rocm6.4",
+    "https://download.pytorch.org/whl/rocm6.3",
 ]
 
 [tool.ruff]

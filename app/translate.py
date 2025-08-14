@@ -9,9 +9,11 @@ from typing import Any
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from torch import nn
 from torch.nn.attention import SDPBackend, sdpa_kernel
 from transformers import AutoProcessor, SeamlessM4Tv2ForSpeechToSpeech
 
@@ -21,6 +23,31 @@ logger = logging.getLogger("seamless.http")
 logging.basicConfig(level=logging.INFO)
 
 logger.info(f"bf16 supported?: {torch.cuda.is_bf16_supported()}")
+
+torch.backends.cuda.matmul.allow_tf32 = False
+torch.backends.cuda.enable_math_sdp(True)  # prefer math path
+
+
+def wrap_linear_fp32(module: nn.Module) -> None:
+    """
+    Replace nn.Linear.forward to compute in float32 and cast back.
+    Applies recursively to all Linear layers inside `module`.
+    """
+    for _name, sub in module.named_modules():
+        if isinstance(sub, nn.Linear):
+            orig_fwd = sub.forward
+
+            def safe_fwd(x, _sub=sub, _orig=orig_fwd):
+                x_dtype = x.dtype if torch.is_floating_point(x) else None
+                # Upcast activations/weights to fp32 for the matmul
+                x32 = x.float() if x_dtype is not None else x
+                w32 = _sub.weight.float()
+                b32 = _sub.bias.float() if _sub.bias is not None else None
+                y32 = F.linear(x32, w32, b32)
+                # Cast back to original dtype if needed
+                return y32.to(x_dtype) if x_dtype is not None else y32
+
+            sub.forward = safe_fwd
 
 
 class SeamlessConfig:
@@ -39,11 +66,18 @@ class SeamlessEngine:
         logger.info("Loading model %s on %s", cfg.model_id, cfg.device)
         self.processor = AutoProcessor.from_pretrained(cfg.model_id)  # type: ignore[no-untyped-call]
         self.model = (
-            SeamlessM4Tv2ForSpeechToSpeech.from_pretrained(cfg.model_id, torch_dtype=cfg.dtype).to(cfg.device).eval()
+            SeamlessM4Tv2ForSpeechToSpeech.from_pretrained(
+                cfg.model_id,
+                torch_dtype=torch.float16,  # cfg.dtype,
+                attn_implementation="eager",  # sidestep SDPA dispatch entirely
+            )
+            .to(cfg.device)
+            .eval()
         )
+        wrap_linear_fp32(self.model)
         logger.info("Compile after move+eval for ROCm speedups - BEGIN")
         try:
-            self.model = torch.compile(self.model, mode="max-autotune")  # PyTorch ≥2.2
+            # self.model = torch.compile(self.model, mode="max-autotune")  # PyTorch ≥2.2
             logger.info("torch.compile enabled")
         except Exception as e:
             logger.info("torch.compile not enabled: %s", e)
@@ -66,16 +100,6 @@ class SeamlessEngine:
         inputs = {k: v.to(self.cfg.device, non_blocking=True) for k, v in inputs.items()}
 
         logger.info("Inference in mixed precision")
-        # with torch.autocast(device_type="cuda", dtype=self.cfg.dtype):
-        #     generated = self.model.generate(
-        #         **inputs,
-        #         tgt_lang=target_language,
-        #         # generate_speech=True,  # Not available for SeamlessM4Tv2ForSpeechToSpeech
-        #         text_num_beams=1,
-        #         use_cache=False,
-        #         return_dict_in_generate=False,
-        #     )
-
         use_amp = os.environ.get("ENABLE_AMP", "1") == "1"
         logger.info(f"Use AMP ? {use_amp}")
 
@@ -92,10 +116,14 @@ class SeamlessEngine:
 
         try:
             if use_amp:
-                with torch.autocast(device_type="cuda", dtype=self.cfg.dtype):
+                logger.info("Call generate with MP - BEGIN")
+                with torch.autocast(device_type="cuda", dtype=torch.float16):
                     generated = _call_generate()
+                logger.info("Call generate with MP - END")
             else:
+                logger.info("Call generate without MP - BEGIN")
                 generated = _call_generate()
+                logger.info("Call generate without MP - END")
         except Exception as e:
             logger.warning("AMP/SDPA path failed (%s); retrying in fp32 + MATH", e)
             # Retry in full fp32 (no autocast)
