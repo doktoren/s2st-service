@@ -1,4 +1,5 @@
 """WebSocket service for VAD and forwarding to the translation API."""
+
 from __future__ import annotations
 
 import asyncio
@@ -6,8 +7,9 @@ import base64
 import logging
 import os
 from contextlib import suppress
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal
 
 import audioop
 import httpx
@@ -48,9 +50,7 @@ class SetupMessage(BaseModel):
     """Initial setup message sent by the client."""
 
     type: Literal["setup"] = "setup"
-    target_language: str = Field(
-        ..., description="Target language code as supported by Seamless."
-    )
+    target_language: str = Field(..., description="Target language code as supported by Seamless.")
     audio_format: AudioFormat
     chunking: dict[str, Any]
 
@@ -114,7 +114,8 @@ class ErrorMessage(BaseModel):
 # ---------------------------
 
 
-class SessionState(TypedDict):
+@dataclass
+class SessionState:
     vad: webrtcvad.Vad
     vad_frame_ms: int
     vad_aggr: int
@@ -156,56 +157,52 @@ def _decode_and_resample(msg: AudioMessage, fmt: AudioFormat) -> bytes:
     return data
 
 
-async def _handle_audio_msg(
-    msg: AudioMessage, setup: SetupMessage, state: SessionState
-) -> None:
+async def _handle_audio_msg(msg: AudioMessage, setup: SetupMessage, state: SessionState) -> None:
     """Decode incoming frame, update VAD state and buffer speech."""
     if msg.duration_ms != 20:
         error_msg = "server_vad requires duration_ms == 20 for every frame"
         raise ValueError(error_msg)
 
     pcm16k = _decode_and_resample(msg, setup.audio_format)
-    is_speech = state["vad"].is_speech(pcm16k, 16000)
+    is_speech = state.vad.is_speech(pcm16k, 16000)
     if is_speech:
         rms = audioop.rms(pcm16k, 2)
         if rms < SILENCE_RMS_THRESHOLD:
             is_speech = False
     if is_speech:
-        state["has_speech"] = True
-        state["silence_ms"] = 0
+        state.has_speech = True
+        state.silence_ms = 0
     else:
-        state["silence_ms"] += state["vad_frame_ms"]
-    if state["has_speech"]:
-        state["buffer_pcm16_16k"].append(pcm16k)
+        state.silence_ms += state.vad_frame_ms
+    if state.has_speech:
+        state.buffer_pcm16_16k.append(pcm16k)
 
 
 def _vad_segment_closed(state: SessionState) -> bool:
     """Return ``True`` when speech is followed by >=400 ms of silence."""
-    return state["has_speech"] and state["silence_ms"] >= 400
+    return state.has_speech and state.silence_ms >= 400
 
 
-async def _maybe_infer_and_emit(
-    ws: WebSocket, setup: SetupMessage, state: SessionState
-) -> None:
+async def _maybe_infer_and_emit(ws: WebSocket, setup: SetupMessage, state: SessionState) -> None:
     """Send buffered audio to the translation service and emit the result."""
-    if not state["buffer_pcm16_16k"] or not state["has_speech"]:
-        state["buffer_pcm16_16k"].clear()
-        state["has_speech"] = False
-        state["silence_ms"] = 0
+    if not state.buffer_pcm16_16k or not state.has_speech:
+        state.buffer_pcm16_16k.clear()
+        state.has_speech = False
+        state.silence_ms = 0
         return
 
-    utterance_id = f"utt-{state['utterance_seq']}"
-    state["utterance_seq"] += 1
+    utterance_id = f"utt-{state.utterance_seq}"
+    state.utterance_seq += 1
 
-    pcm_bytes = b"".join(state["buffer_pcm16_16k"])
-    state["buffer_pcm16_16k"].clear()
+    pcm_bytes = b"".join(state.buffer_pcm16_16k)
+    state.buffer_pcm16_16k.clear()
 
     min_samples = int(0.1 * 16000)
     if len(pcm_bytes) // 2 < min_samples:
         logger.info("Dropping short utterance: samples=%d", len(pcm_bytes) // 2)
-        state["has_speech"] = False
-        state["silence_ms"] = 0
-        state["vad"] = make_vad(state["vad_aggr"])
+        state.has_speech = False
+        state.silence_ms = 0
+        state.vad = make_vad(state.vad_aggr)
         return
 
     src_duration_ms = len(pcm_bytes) * 1000 // (2 * 16000)
@@ -222,9 +219,7 @@ async def _maybe_infer_and_emit(
         data = resp.json()
     except Exception as e:  # pragma: no cover - network failure
         logger.exception("Translation failed")
-        await ws.send_text(
-            ErrorMessage(type="error", code="server_error", message=str(e)).model_dump_json()
-        )
+        await ws.send_text(ErrorMessage(type="error", code="server_error", message=str(e)).model_dump_json())
         return
     latency_ms = int((asyncio.get_event_loop().time() - start) * 1000)
 
@@ -247,9 +242,9 @@ async def _maybe_infer_and_emit(
         ).model_dump_json()
     )
 
-    state["has_speech"] = False
-    state["silence_ms"] = 0
-    state["vad"] = make_vad(state["vad_aggr"])
+    state.has_speech = False
+    state.silence_ms = 0
+    state.vad = make_vad(state.vad_aggr)
 
 
 @app.websocket("/ws")
@@ -261,9 +256,7 @@ async def ws_handler(ws: WebSocket) -> None:  # noqa: C901, PLR0912, PLR0915
         raw = await ws.receive_text()
         setup = SetupMessage.model_validate_json(raw)
     except Exception as exc:
-        await ws.send_text(
-            ErrorMessage(type="error", code="bad_setup", message=str(exc)).model_dump_json()
-        )
+        await ws.send_text(ErrorMessage(type="error", code="bad_setup", message=str(exc)).model_dump_json())
         with suppress(Exception):
             await ws.close()
         return
@@ -281,30 +274,26 @@ async def ws_handler(ws: WebSocket) -> None:  # noqa: C901, PLR0912, PLR0915
         return
 
     vad_aggr = int(setup.chunking.get("vad_aggressiveness", 1))
-    state: SessionState = {
-        "vad": make_vad(vad_aggr),
-        "vad_frame_ms": 20,
-        "vad_aggr": vad_aggr,
-        "buffer_pcm16_16k": [],
-        "utterance_seq": 0,
-        "has_speech": False,
-        "silence_ms": 0,
-    }
+    state = SessionState(
+        vad=make_vad(vad_aggr),
+        vad_frame_ms=20,
+        vad_aggr=vad_aggr,
+        buffer_pcm16_16k=[],
+        utterance_seq=0,
+        has_speech=False,
+        silence_ms=0,
+    )
 
     chunking: dict[str, Any] = {
         "strategy": "server_vad",
-        "vad": {"aggressiveness": state["vad_aggr"], "frame_ms": state["vad_frame_ms"]},
+        "vad": {"aggressiveness": state.vad_aggr, "frame_ms": state.vad_frame_ms},
     }
     negotiated = {
         "audio_format": {"codec": "pcm16", "sample_rate": 16000, "channels": 1},
         "model_audio": {"sample_rate": 16000},
         "chunking": chunking,
     }
-    await ws.send_text(
-        ReadyMessage(
-            type="ready", session_id=id(ws).__str__(), negotiated=negotiated
-        ).model_dump_json()
-    )
+    await ws.send_text(ReadyMessage(type="ready", session_id=id(ws).__str__(), negotiated=negotiated).model_dump_json())
 
     try:
         while True:
@@ -318,9 +307,7 @@ async def ws_handler(ws: WebSocket) -> None:  # noqa: C901, PLR0912, PLR0915
                         await _maybe_infer_and_emit(ws, setup, state)
                         break
                     await ws.send_text(
-                        ErrorMessage(
-                            type="error", code="invalid_audio", message="invalid message"
-                        ).model_dump_json()
+                        ErrorMessage(type="error", code="invalid_audio", message="invalid message").model_dump_json()
                     )
                     continue
 
@@ -349,12 +336,9 @@ async def ws_handler(ws: WebSocket) -> None:  # noqa: C901, PLR0912, PLR0915
             else:
                 break
     except WebSocketDisconnect:
-        state["buffer_pcm16_16k"].clear()
-        state["has_speech"] = False
-        state["silence_ms"] = 0
+        state.buffer_pcm16_16k.clear()
+        state.has_speech = False
+        state.silence_ms = 0
     except Exception as exc:  # pragma: no cover - unexpected failure
         logger.exception("Server error")
-        await ws.send_text(
-            ErrorMessage(type="error", code="server_error", message=str(exc)).model_dump_json()
-        )
-
+        await ws.send_text(ErrorMessage(type="error", code="server_error", message=str(exc)).model_dump_json())

@@ -31,7 +31,7 @@ logging.basicConfig(level=logging.INFO)
 
 # Prefer fast SDPA kernels when available (no-op if unsupported).
 with contextlib.suppress(Exception):
-    sdpa_kernel(enable_math=False, enable_flash=True, enable_mem_efficient=True)
+    sdpa_kernel(enable_math=False, enable_flash=True, enable_mem_efficient=True)  # type:ignore[call-arg]
     logger.info("Fast SDPA attention requested")
 
 # Cap CPU threads used by preprocessing/tokenization a bit.
