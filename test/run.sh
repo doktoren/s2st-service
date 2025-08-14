@@ -1,4 +1,4 @@
 #!/bin/bash
 
-echo "Go to http://localhost:8001/"
-exec python -m http.server 8001
+echo "Go to http://localhost:8002/"
+exec python -m http.server 8002
