@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = "==3.13.*"
 
 [[package]]
@@ -130,7 +130,7 @@ wheels = [
 [[package]]
 name = "colorama"
 version = "0.4.6"
-source = { registry = "https://download.pytorch.org/whl/rocm6.3" }
+source = { registry = "https://download.pytorch.org/whl/rocm6.4" }
 wheels = [
     { url = "https://download.pytorch.org/whl/colorama-0.4.6-py2.py3-none-any.whl", hash = "sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6" },
 ]
@@ -286,7 +286,7 @@ wheels = [
 [[package]]
 name = "markupsafe"
 version = "3.0.2"
-source = { registry = "https://download.pytorch.org/whl/rocm6.3" }
+source = { registry = "https://download.pytorch.org/whl/rocm6.4" }
 wheels = [
     { url = "https://download.pytorch.org/whl/MarkupSafe-3.0.2-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:15ab75ef81add55874e7ab7055e9c397312385bd9ced94920f2802310c930396" },
 ]
@@ -294,7 +294,7 @@ wheels = [
 [[package]]
 name = "mpmath"
 version = "1.3.0"
-source = { registry = "https://download.pytorch.org/whl/rocm6.3" }
+source = { registry = "https://download.pytorch.org/whl/rocm6.4" }
 wheels = [
     { url = "https://download.pytorch.org/whl/mpmath-1.3.0-py3-none-any.whl", hash = "sha256:a0b2b9fe80bbcd81a6647ff13108738cfb482d481d826cc0e02f5b35e5c88d2c" },
 ]
@@ -486,7 +486,7 @@ wheels = [
 [[package]]
 name = "pytorch-triton-rocm"
 version = "3.4.0"
-source = { registry = "https://download.pytorch.org/whl/rocm6.3" }
+source = { registry = "https://download.pytorch.org/whl/rocm6.4" }
 dependencies = [
     { name = "setuptools" },
 ]
@@ -649,10 +649,10 @@ requires-dist = [
     { name = "soundfile", specifier = ">=0.13.1" },
     { name = "tiktoken", specifier = ">=0.11.0" },
     { name = "torch", marker = "extra == 'cpu'", specifier = "==2.8.0" },
-    { name = "torch", marker = "extra == 'gpu-rocm'", specifier = "==2.8.0+rocm6.3" },
+    { name = "torch", marker = "extra == 'gpu-rocm'", specifier = "==2.8.0+rocm6.4" },
     { name = "torchaudio", marker = "extra == 'cpu'", specifier = "==2.8.0" },
-    { name = "torchaudio", marker = "extra == 'gpu-rocm'", specifier = "==2.8.0+rocm6.3" },
-    { name = "transformers", specifier = ">=4.55.1,<4.58" },
+    { name = "torchaudio", marker = "extra == 'gpu-rocm'", specifier = "==2.8.0+rocm6.4" },
+    { name = "transformers", specifier = ">=4.55.2,<4.58" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.35" },
     { name = "webrtcvad", specifier = ">=2.0.10" },
 ]
@@ -794,8 +794,8 @@ wheels = [
 
 [[package]]
 name = "torch"
-version = "2.8.0+rocm6.3"
-source = { registry = "https://download.pytorch.org/whl/rocm6.3" }
+version = "2.8.0+rocm6.4"
+source = { registry = "https://download.pytorch.org/whl/rocm6.4" }
 dependencies = [
     { name = "filelock" },
     { name = "fsspec" },
@@ -807,20 +807,20 @@ dependencies = [
     { name = "typing-extensions" },
 ]
 wheels = [
-    { url = "https://download.pytorch.org/whl/rocm6.3/torch-2.8.0%2Brocm6.3-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:2cdaac5545d66f11030914ae03c85d161f24b14053b67f49500a8f52638ef104" },
-    { url = "https://download.pytorch.org/whl/rocm6.3/torch-2.8.0%2Brocm6.3-cp313-cp313t-manylinux_2_28_x86_64.whl", hash = "sha256:656892d4f59d1138aaade39fafa4a317a81a13238288a98a654a75cf80349774" },
+    { url = "https://download.pytorch.org/whl/rocm6.4/torch-2.8.0%2Brocm6.4-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:262ebeac6905df801969fb6dbdc085c75c21c5609dc8357334ec0b0a242e50eb" },
+    { url = "https://download.pytorch.org/whl/rocm6.4/torch-2.8.0%2Brocm6.4-cp313-cp313t-manylinux_2_28_x86_64.whl", hash = "sha256:5b7d7a8d0174ceb30d203bbf7e5cf04eb8d7aa9e8ed09521ca84a7f48979b4e9" },
 ]
 
 [[package]]
 name = "torchaudio"
-version = "2.8.0+rocm6.3"
-source = { registry = "https://download.pytorch.org/whl/rocm6.3" }
+version = "2.8.0+rocm6.4"
+source = { registry = "https://download.pytorch.org/whl/rocm6.4" }
 dependencies = [
     { name = "torch" },
 ]
 wheels = [
-    { url = "https://download.pytorch.org/whl/rocm6.3/torchaudio-2.8.0%2Brocm6.3-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:b4a907acc33c9fd513d9e8dd7385f2dd5628194688186622177fb35f61d93aef" },
-    { url = "https://download.pytorch.org/whl/rocm6.3/torchaudio-2.8.0%2Brocm6.3-cp313-cp313t-manylinux_2_28_x86_64.whl", hash = "sha256:bf2ca7f974f24189cdf3ac02f71dbf6b466d1573712d4e5a30290ce63c6537bc" },
+    { url = "https://download.pytorch.org/whl/rocm6.4/torchaudio-2.8.0%2Brocm6.4-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:eaf3be24c63e9989a400c2065558c762b605e6191de3a92698ff24e92c7585ac" },
+    { url = "https://download.pytorch.org/whl/rocm6.4/torchaudio-2.8.0%2Brocm6.4-cp313-cp313t-manylinux_2_28_x86_64.whl", hash = "sha256:966cfef19f7e32a5bd3c0d7a28a1fb17fc2bdc01d1aa9832da0bec2d304a927e" },
 ]
 
 [[package]]
@@ -837,7 +837,7 @@ wheels = [
 
 [[package]]
 name = "transformers"
-version = "4.55.1"
+version = "4.55.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "filelock" },
@@ -851,9 +851,9 @@ dependencies = [
     { name = "tokenizers" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fd/f4/5227c3275b3ea92df639a763d819ade8726d6a23fe6b1f497d989ebd8931/transformers-4.55.1.tar.gz", hash = "sha256:0de83246bdc4abdff6475302cd2fbd19f1c9f7ae7c1d7ec580e06df2f0ae93aa", size = 9571228, upload-time = "2025-08-13T08:57:32.357Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/70/a5/d8b8a1f3a051daeb5f11253bb69fc241f193d1c0566e299210ed9220ff4e/transformers-4.55.2.tar.gz", hash = "sha256:a45ec60c03474fd67adbce5c434685051b7608b3f4f167c25aa6aeb1cad16d4f", size = 9571466, upload-time = "2025-08-13T18:25:43.767Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/09/a2/5b840892d7ec3b91d2bc57f503ee91cb37d6d4d0b1720ccbe661f35b48db/transformers-4.55.1-py3-none-any.whl", hash = "sha256:9e936d9c106924579f509f63da66aa899401e2d1fb4a4f964a3c494476b5110f", size = 11269726, upload-time = "2025-08-13T08:57:25.19Z" },
+    { url = "https://files.pythonhosted.org/packages/db/5a/022ac010bedfb5119734cf9d743cf1d830cb4c604f53bb1552216f4344dc/transformers-4.55.2-py3-none-any.whl", hash = "sha256:097e3c2e2c0c9681db3da9d748d8f9d6a724c644514673d0030e8c5a1109f1f1", size = 11269748, upload-time = "2025-08-13T18:25:40.394Z" },
 ]
 
 [[package]]

@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import audioop
 import logging
 import os
 from contextlib import suppress
 from enum import Enum
 from typing import Any, Literal, TypedDict
 
+import audioop
 import httpx
 import orjson
 import webrtcvad
@@ -126,7 +126,6 @@ class SessionState(TypedDict):
 
 def make_vad(aggr: int) -> webrtcvad.Vad:
     """Create a configured WebRTC VAD instance."""
-
     vad = webrtcvad.Vad()
     vad.set_mode(aggr)
     return vad
@@ -143,13 +142,11 @@ app = FastAPI(title="Seamless S2ST WebSocket")
 @app.get("/")
 async def index() -> HTMLResponse:
     """Serve a minimal page to verify the server is up."""
-
     return HTMLResponse("<pre>Seamless S2ST WebSocket service is running.</pre>")
 
 
 def _decode_and_resample(msg: AudioMessage, fmt: AudioFormat) -> bytes:
     """Decode wire audio to 16 kHz PCM16 bytes."""
-
     data = base64.b64decode(msg.audio_b64)
     if fmt.codec is Codec.G711_ULAW:
         pcm16 = audioop.ulaw2lin(data, 2)
@@ -163,7 +160,6 @@ async def _handle_audio_msg(
     msg: AudioMessage, setup: SetupMessage, state: SessionState
 ) -> None:
     """Decode incoming frame, update VAD state and buffer speech."""
-
     if msg.duration_ms != 20:
         error_msg = "server_vad requires duration_ms == 20 for every frame"
         raise ValueError(error_msg)
@@ -185,7 +181,6 @@ async def _handle_audio_msg(
 
 def _vad_segment_closed(state: SessionState) -> bool:
     """Return ``True`` when speech is followed by >=400 ms of silence."""
-
     return state["has_speech"] and state["silence_ms"] >= 400
 
 
@@ -193,7 +188,6 @@ async def _maybe_infer_and_emit(
     ws: WebSocket, setup: SetupMessage, state: SessionState
 ) -> None:
     """Send buffered audio to the translation service and emit the result."""
-
     if not state["buffer_pcm16_16k"] or not state["has_speech"]:
         state["buffer_pcm16_16k"].clear()
         state["has_speech"] = False
@@ -261,7 +255,6 @@ async def _maybe_infer_and_emit(
 @app.websocket("/ws")
 async def ws_handler(ws: WebSocket) -> None:  # noqa: C901, PLR0912, PLR0915
     """WebSocket endpoint implementing the agreed protocol."""
-
     await ws.accept()
 
     try:

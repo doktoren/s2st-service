@@ -11,7 +11,7 @@ dependencies = [
     "uvicorn[standard]>=0.35",
     "pydantic>=2.11.7",
     "numpy>=2.3.2,<2.4.0",
-    "transformers>=4.55.1,<4.58",
+    "transformers>=4.55.2,<4.58",
     "webrtcvad>=2.0.10",
     "soundfile>=0.13.1",
     "g711>=1.0.0",
@@ -30,8 +30,8 @@ cpu = [
 ]
 # ROCm wheels + Triton, pinned to matching versions.
 gpu-rocm = [
-    "torch==2.8.0+rocm6.3",
-    "torchaudio==2.8.0+rocm6.3",
+    "torch==2.8.0+rocm6.4",
+    "torchaudio==2.8.0+rocm6.4",
     "pytorch-triton-rocm==3.4.0",
 ]
 
@@ -45,7 +45,7 @@ dev = [
 # Ensures editable install behavior and deterministic resolution.
 index-strategy = "unsafe-best-match"
 extra-index-url = [
-    "https://download.pytorch.org/whl/rocm6.3",
+    "https://download.pytorch.org/whl/rocm6.4",
 ]
 
 [tool.ruff]

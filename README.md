@@ -25,8 +25,7 @@ management.  First install `uv` and then choose a backend:
 uv sync --extra cpu
 
 # AMD ROCm 6.3 GPU
-UV_EXTRA_INDEX_URL=https://download.pytorch.org/whl/rocm6.3 \
-    uv sync --extra gpu-rocm
+uv sync --extra gpu-rocm
 ```
 
 Development tools such as `ruff` and `mypy` live in the `dev` dependency

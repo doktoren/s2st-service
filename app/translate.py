@@ -1,31 +1,34 @@
 """HTTP API for speech translation."""
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
-from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import torch
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from transformers import AutoProcessor, SeamlessM4Tv2Model
+from torch.nn.attention import SDPBackend, sdpa_kernel
+from transformers import AutoProcessor, SeamlessM4Tv2ForSpeechToSpeech
 
 from .common import AudioFormat, AudioUtils, Codec
 
 logger = logging.getLogger("seamless.http")
 logging.basicConfig(level=logging.INFO)
 
+logger.info(f"bf16 supported?: {torch.cuda.is_bf16_supported()}")
 
-@dataclass
+
 class SeamlessConfig:
     """Configuration for the Seamless translation engine."""
 
     model_id: str = "facebook/seamless-m4t-v2-large"
-    device: str = "cuda" if torch.cuda.is_available() else "cpu"
-    dtype: torch.dtype = torch.float32
+    device: str = "cuda" if torch.cuda.is_available() else "cpu"  # ROCm uses the CUDA API
+    dtype: torch.dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
 
 
 class SeamlessEngine:
@@ -35,31 +38,70 @@ class SeamlessEngine:
         self.cfg = cfg
         logger.info("Loading model %s on %s", cfg.model_id, cfg.device)
         self.processor = AutoProcessor.from_pretrained(cfg.model_id)  # type: ignore[no-untyped-call]
-        self.model = SeamlessM4Tv2Model.from_pretrained(cfg.model_id, torch_dtype=cfg.dtype)
-        self.model.to(cfg.device)
-        self.model.eval()
+        self.model = (
+            SeamlessM4Tv2ForSpeechToSpeech.from_pretrained(cfg.model_id, torch_dtype=cfg.dtype).to(cfg.device).eval()
+        )
+        logger.info("Compile after move+eval for ROCm speedups - BEGIN")
+        try:
+            self.model = torch.compile(self.model, mode="max-autotune")  # PyTorch ≥2.2
+            logger.info("torch.compile enabled")
+        except Exception as e:
+            logger.info("torch.compile not enabled: %s", e)
+        logger.info("Compile after move+eval for ROCm speedups - END")
 
     @torch.inference_mode()
     def s2st(self, audio_16k: torch.Tensor, target_language: str) -> torch.Tensor:
         """
         Speech-to-speech translation.
 
-        Args:
-            audio_16k: Mono waveform tensor at 16 kHz in ``[-1, 1]``.
-            target_language: Target language code supported by Seamless.
-
-        Returns:
-            Translated waveform at 16 kHz in ``[-1, 1]``.
-
+        audio_16k: Mono waveform tensor at 16 kHz in [-1, 1], CPU.
         """
-        inputs = self.processor(audios=[audio_16k.cpu().numpy()], sampling_rate=16000, return_tensors="pt")
-        inputs = {k: v.to(self.cfg.device) for k, v in inputs.items()}
-        generated = self.model.generate(
-            **inputs,
-            tgt_lang=target_language,
-            generate_speech=True,
-            speech_use_cache=False,
-        )
+        logger.info("Pin CPU tensor for faster host→device transfer")
+        audio_np = audio_16k.cpu().numpy() if audio_16k.is_cuda else audio_16k.contiguous().pin_memory().numpy()
+
+        logger.info("Processor runs on CPU")
+        inputs = self.processor(audios=[audio_np], sampling_rate=16000, return_tensors="pt")
+
+        logger.info("Move features to GPU")
+        inputs = {k: v.to(self.cfg.device, non_blocking=True) for k, v in inputs.items()}
+
+        logger.info("Inference in mixed precision")
+        # with torch.autocast(device_type="cuda", dtype=self.cfg.dtype):
+        #     generated = self.model.generate(
+        #         **inputs,
+        #         tgt_lang=target_language,
+        #         # generate_speech=True,  # Not available for SeamlessM4Tv2ForSpeechToSpeech
+        #         text_num_beams=1,
+        #         use_cache=False,
+        #         return_dict_in_generate=False,
+        #     )
+
+        use_amp = os.environ.get("ENABLE_AMP", "1") == "1"
+        logger.info(f"Use AMP ? {use_amp}")
+
+        def _call_generate() -> Any:  # noqa: ANN401
+            # Force stable attention backend first
+            with sdpa_kernel(SDPBackend.MATH):
+                return self.model.generate(
+                    **inputs,
+                    tgt_lang=target_language,
+                    text_num_beams=1,
+                    use_cache=False,
+                    return_dict_in_generate=False,
+                )
+
+        try:
+            if use_amp:
+                with torch.autocast(device_type="cuda", dtype=self.cfg.dtype):
+                    generated = _call_generate()
+            else:
+                generated = _call_generate()
+        except Exception as e:
+            logger.warning("AMP/SDPA path failed (%s); retrying in fp32 + MATH", e)
+            # Retry in full fp32 (no autocast)
+            generated = _call_generate()
+
+        logger.info("Handle different output formats")
         if isinstance(generated, torch.Tensor):
             out = generated[0].to("cpu")
         elif isinstance(generated, dict):
@@ -79,7 +121,8 @@ class SeamlessEngine:
             out = torch.as_tensor(generated[0], dtype=torch.float32)
         else:
             out = torch.as_tensor(generated, dtype=torch.float32)
-        return torch.clamp(out.to(torch.float32), -1.0, 1.0)
+
+        return torch.clamp(out, -1.0, 1.0)
 
 
 engine = SeamlessEngine(SeamlessConfig())
@@ -121,13 +164,15 @@ async def translate(req: TranslateRequest) -> TranslateResponse:
         tens = AudioUtils.pcm16_bytes_to_tensor_mono(data)
         wave_16k = tens if fmt.sample_rate == 16000 else AudioUtils.resample(tens, fmt.sample_rate, 16000)
 
-    start = asyncio.get_event_loop().time()
+    loop = asyncio.get_event_loop()
+    t0 = loop.time()
     if bool(int(os.environ.get("BYPASS_ENGINE", "0"))):
         out_16k = torch.clamp(wave_16k, -1.0, 1.0).to(torch.float32)
     else:
-        out_16k = engine.s2st(wave_16k.to(engine.cfg.device), req.target_language)
-    latency_ms = int((asyncio.get_event_loop().time() - start) * 1000)
-    logger.info("S2ST done: latency_ms=%d out_len=%d", latency_ms, int(out_16k.numel()))
+        out_16k = engine.s2st(wave_16k, req.target_language)
+
+    latency_ms = int((loop.time() - t0) * 1000)
+    logger.info("end2end_ms=%d out_samples=%d", latency_ms, int(out_16k.numel()))
 
     if fmt.codec is Codec.G711_ULAW:
         out_wave = out_16k if fmt.sample_rate == 16000 else AudioUtils.resample(out_16k, 16000, 8000)
