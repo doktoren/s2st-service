@@ -17,10 +17,16 @@
     <label>WS URL</label>
     <input id="wsurl" size="40" value="ws://localhost:8000/ws" />
   </div>
+  <div>
+    <label>HTTP URL</label>
+    <input id="httpurl" size="40" value="http://localhost:8001/translate" />
+  </div>
   <div style="margin-top:.5rem">
     <label>Target</label><input id="tgt" value="en" size="6" />
-    <button id="start">Start</button>
-    <button id="stop" disabled>Stop</button>
+    <button id="start">Start WS</button>
+    <button id="stop" disabled>Stop WS</button>
+    <button id="startHttp">Start HTTP</button>
+    <button id="stopHttp" disabled>Stop HTTP</button>
   </div>
   <div id="log"></div>
 
@@ -57,13 +63,16 @@ function toSeamlessLang(code, {target=false} = {}) {
 
 const log = (...a) => { const el = document.getElementById("log"); el.textContent += a.join(" ") + "\n"; el.scrollTop = el.scrollHeight; };
 
-let ctx, mediaStream, sourceNode, workletNode, sink, ws, seq = 0, playingCtx, framesSent = 0, nextPlayTime = 0;
+let ctx, mediaStream, sourceNode, workletNode, sink, ws, seq = 0, playingCtx, framesSent = 0, nextPlayTime = 0, recBuffers = [];
 let opened = false;
 
 document.getElementById("start").onclick = start;
 // Prevent double-clicks creating two sessions
 document.getElementById("start").addEventListener("click", e => e.target.disabled = true);
 document.getElementById("stop").onclick = stop;
+document.getElementById("startHttp").onclick = startHttp;
+document.getElementById("startHttp").addEventListener("click", e => e.target.disabled = true);
+document.getElementById("stopHttp").onclick = stopHttp;
 
 async function start() {
   // If a previous session exists, stop it first to avoid leaking mic/audio state.
@@ -213,6 +222,106 @@ async function stop() {
   playingCtx = undefined; nextPlayTime = 0;
   document.getElementById("start").disabled = false;
   document.getElementById("stop").disabled = true;
+}
+
+async function startHttp() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    alert("getUserMedia unavailable. Use https or http://localhost.");
+    return;
+  }
+  const tgtLangIn = document.getElementById("tgt").value.trim() || "en";
+  const tgtLang = toSeamlessLang(tgtLangIn, {target:true});
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
+      }
+    });
+  } catch (e) {
+    log("Mic error:", e.message || e);
+    return;
+  }
+  sourceNode = ctx.createMediaStreamSource(mediaStream);
+  await ctx.resume();
+  recBuffers = [];
+  const workletCode = `
+    class MicProcessor extends AudioWorkletProcessor {
+      constructor() { super(); this.buf = new Float32Array(0); }
+      process(inputs) {
+        const input = inputs[0];
+        if (!input || !input[0]) return true;
+        const frame = input[0];
+        const tmp = new Float32Array(this.buf.length + frame.length);
+        tmp.set(this.buf, 0); tmp.set(frame, this.buf.length);
+        this.buf = tmp;
+        const srcRate = sampleRate;
+        const srcWin = Math.max(1, Math.round(srcRate * 0.02));
+        while (this.buf.length >= srcWin) {
+          const chunk = this.buf.subarray(0, srcWin);
+          const dstLen = 320;
+          const out = new Float32Array(dstLen);
+          for (let i = 0; i < dstLen; i++) {
+            const t = i * (srcRate / 16000);
+            const j = Math.floor(t);
+            const frac = t - j;
+            const s0 = chunk[j] || 0;
+            const s1 = chunk[j + 1] || 0;
+            out[i] = s0 + (s1 - s0) * frac;
+          }
+          this.port.postMessage(out);
+          this.buf = this.buf.subarray(srcWin);
+        }
+        return true;
+      }
+    }
+    registerProcessor('mic-processor', MicProcessor);
+  `;
+  await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([workletCode], {type:'application/javascript'})));
+  workletNode = new AudioWorkletNode(ctx, 'mic-processor');
+  workletNode.port.onmessage = e => recBuffers.push(e.data);
+  sourceNode.connect(workletNode);
+  sink = ctx.createGain(); sink.gain.value = 0; workletNode.connect(sink); sink.connect(ctx.destination);
+  document.getElementById("startHttp").disabled = true;
+  document.getElementById("stopHttp").disabled = false;
+  document.getElementById("start").disabled = false;
+}
+
+async function stopHttp() {
+  try { workletNode?.disconnect(); } catch {}
+  try { sourceNode?.disconnect(); } catch {}
+  try { sink?.disconnect(); } catch {}
+  try { mediaStream?.getTracks().forEach(t => t.stop()); } catch {}
+  try { await ctx?.close(); } catch {}
+  const totalLen = recBuffers.reduce((sum, a) => sum + a.length, 0);
+  const buf = new Float32Array(totalLen);
+  let offset = 0;
+  for (const a of recBuffers) { buf.set(a, offset); offset += a.length; }
+  const u8 = floatToPcm16LE(buf);
+  const b64 = base64FromBytes(u8);
+  const HTTP_URL = document.getElementById("httpurl").value.trim();
+  const tgtLangIn = document.getElementById("tgt").value.trim() || "en";
+  const tgtLang = toSeamlessLang(tgtLangIn, {target:true});
+  let resp;
+  try {
+    resp = await fetch(HTTP_URL, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({audio_b64: b64, audio_format: {codec: "pcm16", sample_rate: 16000, channels: 1}, target_language: tgtLang})
+    });
+  } catch (e) {
+    log("HTTP error:", e.message || e);
+    return;
+  }
+  const out = await resp.json();
+  const bytes = bytesFromBase64(out.audio_b64);
+  playPcm16Mono(bytes, 16000);
+  document.getElementById("startHttp").disabled = false;
+  document.getElementById("stopHttp").disabled = true;
+  recBuffers = [];
 }
 
 function floatToPcm16LE(f32) {
