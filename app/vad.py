@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 import audioop
 import httpx
+import torch
 import webrtcvad
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
@@ -22,6 +23,20 @@ logger = logging.getLogger("seamless.ws")
 logging.basicConfig(level=logging.INFO)
 
 TRANSLATE_URL = os.environ.get("TRANSLATE_URL", "http://localhost:8001/translate")
+
+silero_model: torch.nn.Module | None = None
+
+
+def _silero_is_speech(pcm16: bytes) -> bool:
+    """Return True if Silero VAD detects speech in the frame."""
+    global silero_model
+    if silero_model is None:
+        silero_model, _ = torch.hub.load("snakers4/silero-vad", "silero_vad", trust_repo=True)
+    pcm40 = pcm16 + pcm16
+    audio_tensor = torch.frombuffer(pcm40, dtype=torch.int16).to(torch.float32) / 32768.0
+    with torch.no_grad():
+        prob: float = float(silero_model(audio_tensor, 16000).item())
+    return prob > 0.5
 
 
 # ---------------------------
@@ -162,7 +177,9 @@ async def _handle_audio_msg(msg: AudioMessage, setup: SetupMessage, state: Sessi
         raise ValueError(error_msg)
 
     pcm16k = _decode_and_resample(msg, setup.audio_format)
-    is_speech = state.vad.is_speech(pcm16k, 16000)
+    webrtc_is_speech = state.vad.is_speech(pcm16k, 16000)
+    silero_is_speech = _silero_is_speech(pcm16k)
+    is_speech = webrtc_is_speech or silero_is_speech
     if is_speech:
         rms = audioop.rms(pcm16k, 2)
         if rms < 330:  # ~0.01 in int16 units
