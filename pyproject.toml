@@ -13,6 +13,7 @@ dependencies = [
     "numpy>=2.3.2,<2.4.0",
     "transformers>=4.55.2,<4.58",
     "webrtcvad>=2.0.10",
+    "silero>=0.4.1",
     "soundfile>=0.13.1",
     "g711>=1.0.0",
     "httpx>=0.28.1",
