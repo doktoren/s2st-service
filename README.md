@@ -1,10 +1,18 @@
 # Seamless Speech-to-Speech Translation Service
 
 This repository hosts a small FastAPI based server that exposes Meta's
-SeamlessM4T-V2-Large model over a WebSocket interface.  The goal is to run
-the full speech-to-speech translation pipeline locally without depending on
+SeamlessM4T-V2-Large model over a WebSocket interface.
+
+[This demo page](https://seamless.metademolab.com/demo) lets you record some speech and have it translated using SeamlessM4T-V2-Large
+
+The goal of this repository is to run the full speech-to-speech translation pipeline locally without depending on
 any third-party cloud service.  Clients stream audio frames to the `/ws`
 endpoint and receive translated audio in real time.
+
+Unfortunately the model is licensed under Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0) - **Non-commercial use only**
+
+TODO: Check this commercial alternative: https://azure.microsoft.com/en-us/products/ai-services/ai-translator
+
 
 ## Features
 
@@ -37,16 +45,16 @@ uv pip install --group dev
 
 ## Intended streaming behavior
 
-* Once the test page is started it opens a WebSocket connection and streams audio in 20 ms chunks to the server.
+* Once the test page is started it opens a WebSocket connection and streams audio in 20 ms chunks to the server.
 * The backend performs voice activity detection on the incoming frames.
 * When a pause is detected, the buffered speech is forwarded to the model for translation.
-* As soon as translated audio is available—even partially—the server streams it back to the browser.  The server may send audio faster than real time; the client should play it at normal speed until finished.
+* As soon as translated audio is available-even partially-the server streams it back to the browser.  The server may send audio faster than real time; the client should play it at normal speed until finished.
 * While a translation is running the server should avoid beginning another one by pausing WebSocket reads or otherwise ensuring that only one translation is in flight.
 * Clicking stop on the test page should send roughly one second of silence so the final segment triggers VAD processing.
 
 ## Development workflow
 
-* `./lint.sh` – install dev dependencies, run `ruff` and `mypy`.
+* `./lint.sh` - install dev dependencies, run `ruff` and `mypy`.
 * The translation implementation lives in `app/translate.py`.
 * `run_translate.sh` starts the server with a single worker and verbose logging.
 * The vad implementation lives in `app/vad.py`.
