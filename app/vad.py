@@ -27,13 +27,14 @@ TRANSLATE_URL = os.environ.get("TRANSLATE_URL", "http://localhost:8001/translate
 silero_model: torch.nn.Module | None = None
 
 
-def _silero_is_speech(pcm16: bytes) -> bool:
+def _silero_is_speech(pcm16_a: bytes, pcm16_b: bytes) -> bool:
     """Return True if Silero VAD detects speech in the frame."""
     global silero_model
     if silero_model is None:
-        silero_model, _ = torch.hub.load("snakers4/silero-vad", "silero_vad", trust_repo=True)
-    pcm40 = pcm16 + pcm16
-    audio_tensor = torch.frombuffer(pcm40, dtype=torch.int16).to(torch.float32) / 32768.0
+        silero_model, _ = torch.hub.load(  # type: ignore[no-untyped-call]
+            "snakers4/silero-vad", "silero_vad", trust_repo=True
+        )
+    audio_tensor = torch.frombuffer(pcm16_a + pcm16_b, dtype=torch.int16).to(torch.float32) / 32768.0
     with torch.no_grad():
         prob: float = float(silero_model(audio_tensor, 16000).item())
     return prob > 0.5
@@ -126,6 +127,16 @@ class ErrorMessage(BaseModel):
 # ---------------------------
 
 SPEECH_STREAK_COUNT_THRESHOLD = 3
+SILENCE_NUM_FRAMES = 30
+
+
+@dataclass
+class Audio:
+    pcm16_16k: bytes
+    webrtc_is_speech: bool
+    # silero_is_speech is set to True if this frame joined with the previous or next
+    # frame passes silero speech detection
+    silero_is_speech: bool = False
 
 
 @dataclass
@@ -133,9 +144,8 @@ class SessionState:
     vad: webrtcvad.Vad
     vad_aggr: int
     utterance_seq: int
-    buffer_pcm16_16k: list[bytes]
-    speech_streak_count: int
-    silence_ms: int
+    audio: list[Audio]
+    speech_detected: bool
 
 
 def make_vad(aggr: int) -> webrtcvad.Vad:
@@ -177,36 +187,35 @@ async def _handle_audio_msg(msg: AudioMessage, setup: SetupMessage, state: Sessi
         raise ValueError(error_msg)
 
     pcm16k = _decode_and_resample(msg, setup.audio_format)
-    webrtc_is_speech = state.vad.is_speech(pcm16k, 16000)
-    silero_is_speech = _silero_is_speech(pcm16k)
-    is_speech = webrtc_is_speech or silero_is_speech
-    if is_speech:
-        rms = audioop.rms(pcm16k, 2)
-        if rms < 330:  # ~0.01 in int16 units
-            is_speech = False
 
-    state.buffer_pcm16_16k.append(pcm16k)
-    if is_speech:
-        state.speech_streak_count += 1
-        state.silence_ms = 0
-    elif state.speech_streak_count < SPEECH_STREAK_COUNT_THRESHOLD:
-        state.speech_streak_count = 0
-        state.silence_ms = 0
-        state.buffer_pcm16_16k.clear()
-    else:
-        state.silence_ms += 20
+    audio = Audio(
+        pcm16_16k=pcm16k,
+        # 330 is ~0.01 in int16 units. This check may be better to omit
+        webrtc_is_speech=state.vad.is_speech(pcm16k, 16000),  # if audioop.rms(pcm16k, 2) >= 330 else False,
+    )
+    state.audio.append(audio)
+    if len(state.audio) >= 2 and state.audio[-2].webrtc_is_speech and state.audio[-1].webrtc_is_speech:
+        silero_is_speech = _silero_is_speech(state.audio[-2].pcm16_16k, state.audio[-1].pcm16_16k)
+        state.audio[-2].silero_is_speech |= silero_is_speech
+        state.audio[-1].silero_is_speech |= silero_is_speech
+    if (
+        not state.speech_detected
+        and len(state.audio) >= SPEECH_STREAK_COUNT_THRESHOLD
+        and all(audio.silero_is_speech for audio in state.audio[-SPEECH_STREAK_COUNT_THRESHOLD:])
+    ):
+        state.speech_detected = True
 
 
 async def _maybe_infer_and_emit(ws: WebSocket, setup: SetupMessage, state: SessionState) -> None:
     """Send buffered audio to the translation service and emit the result."""
     try:
-        if state.speech_streak_count < SPEECH_STREAK_COUNT_THRESHOLD:
+        if not state.speech_detected:
             return
 
         utterance_id = f"utt-{state.utterance_seq}"
         state.utterance_seq += 1
 
-        pcm_bytes = b"".join(state.buffer_pcm16_16k)
+        pcm_bytes = b"".join(audio.pcm16_16k for audio in state.audio)
         min_samples = 16000 // 10  # 0.1 second
         if len(pcm_bytes) // 2 < min_samples:
             logger.info("Dropping short utterance: samples=%d", len(pcm_bytes) // 2)
@@ -250,9 +259,8 @@ async def _maybe_infer_and_emit(ws: WebSocket, setup: SetupMessage, state: Sessi
         )
 
     finally:
-        state.buffer_pcm16_16k.clear()
-        state.speech_streak_count = False
-        state.silence_ms = 0
+        state.audio.clear()
+        state.speech_detected = False
 
 
 @app.websocket("/ws")
@@ -273,10 +281,9 @@ async def ws_handler(ws: WebSocket) -> None:  # noqa: C901
     state = SessionState(
         vad=make_vad(vad_aggr),
         vad_aggr=vad_aggr,
-        buffer_pcm16_16k=[],
+        audio=[],
         utterance_seq=0,
-        speech_streak_count=0,
-        silence_ms=0,
+        speech_detected=False,
     )
 
     await ws.send_text(ReadyMessage(type="ready", session_id=id(ws).__str__()).model_dump_json())
@@ -299,11 +306,14 @@ async def ws_handler(ws: WebSocket) -> None:  # noqa: C901
                     )
                 elif isinstance(incoming, AudioMessage):
                     await _handle_audio_msg(incoming, setup, state)
-                    logger.info(
-                        f"Now state is len={len(state.buffer_pcm16_16k)}, "
-                        f"speech_streak_count={state.speech_streak_count}, silence_ms={state.silence_ms}"
-                    )
-                    if state.silence_ms >= 400:
+                    webrtc = "".join("T" if audio.webrtc_is_speech else "F" for audio in state.audio)
+                    silero = "".join("T" if audio.silero_is_speech else "F" for audio in state.audio)
+                    logger.info(f"Now state is len={len(state.audio)}\nWebRTC: {webrtc}\nSilero: {silero}")
+                    if (
+                        state.speech_detected
+                        and len(state.audio) > SILENCE_NUM_FRAMES
+                        and not any(audio.silero_is_speech for audio in state.audio[-SILENCE_NUM_FRAMES:])
+                    ):
                         await _maybe_infer_and_emit(ws, setup, state)
 
             elif "bytes" in msg and msg["bytes"] is not None:
@@ -316,9 +326,8 @@ async def ws_handler(ws: WebSocket) -> None:  # noqa: C901
                 logger.warning(f"Received invalid message - aborting: {msg}")
                 break
     except WebSocketDisconnect:
-        state.buffer_pcm16_16k.clear()
-        state.speech_streak_count = 0
-        state.silence_ms = 0
+        state.audio.clear()
+        state.speech_detected = False
     except Exception as exc:  # pragma: no cover - unexpected failure
         logger.exception("Server error")
         await ws.send_text(ErrorMessage(type="error", code="server_error", message=str(exc)).model_dump_json())
