@@ -52,7 +52,7 @@ class SeamlessEngine:
 
     def __init__(self, cfg: SeamlessConfig) -> None:
         self.cfg = cfg
-        logger.info("Loading model %s on %s", cfg.model_id, cfg.device)
+        logger.info("Loading model {cfg.model_id} on {cfg.device}")
         self.processor = AutoProcessor.from_pretrained(cfg.model_id)  # type: ignore[no-untyped-call]
         self.model = (
             SeamlessM4Tv2ForSpeechToSpeech.from_pretrained(
@@ -155,9 +155,7 @@ class SeamlessEngine:
             out = torch.as_tensor(generated, dtype=torch.float32)
 
         t5 = time.perf_counter()
-        logger.info(
-            "post_ms=%d total_ms=%d", int((t5 - t4) * 1000), int((t5 - t0) * 1000)
-        )
+        logger.info("post_ms=%d total_ms=%d", int((t5 - t4) * 1000), int((t5 - t0) * 1000))
 
         return torch.clamp(out, -1.0, 1.0)
 
@@ -201,9 +199,7 @@ async def translate(req: TranslateRequest) -> TranslateResponse:
         wave_16k = AudioUtils.resample(tens, 8000, 16000)
     else:
         tens = AudioUtils.pcm16_bytes_to_tensor_mono(data)
-        wave_16k = (
-            tens if fmt.sample_rate == 16000 else AudioUtils.resample(tens, fmt.sample_rate, 16000)
-        )
+        wave_16k = tens if fmt.sample_rate == 16000 else AudioUtils.resample(tens, fmt.sample_rate, 16000)
     decode_ms = int((loop.time() - decode_t0) * 1000)
     logger.info("decode_ms=%d", decode_ms)
     t0 = loop.time()

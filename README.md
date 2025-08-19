@@ -1,3 +1,5 @@
+Warning: Large parts of this repository has been created by chatGPT and not everything has been reviewed in detail.
+
 # Seamless Speech-to-Speech Translation Service
 
 This repository hosts a small FastAPI based server that exposes Meta's
