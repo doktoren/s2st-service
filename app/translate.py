@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import time
 
 import numpy as np
 import torch
@@ -21,23 +22,19 @@ from .common import AudioFormat, AudioUtils, Codec
 os.environ.setdefault("MIOPEN_LOG_LEVEL", "1")  # 0=silent, 1=warn+err
 os.environ.setdefault("MIOPEN_DEBUG_DISABLE_WORKSPACE", "0")  # keep workspace enabled
 os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
-# Additional perf hints for this platform (RDNA3/ROCm).
-os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-os.environ.setdefault("MIOPEN_FIND_MODE", "1")
-os.environ.setdefault("MIOPEN_FIND_ENFORCE", "2")
 
 logger = logging.getLogger("seamless.http")
 logging.basicConfig(level=logging.INFO)
 
+for _env in ("MIOPEN_LOG_LEVEL", "MIOPEN_DEBUG_DISABLE_WORKSPACE", "TRANSFORMERS_VERBOSITY"):
+    logger.info("%s=%s", _env, os.environ.get(_env))
+
 # Prefer fast SDPA kernels when available (no-op if unsupported).
-with contextlib.suppress(Exception):
+try:
     sdpa_kernel(enable_math=False, enable_flash=True, enable_mem_efficient=True)  # type:ignore[call-arg]
     logger.info("Fast SDPA attention requested")
-
-# Cap CPU threads used by preprocessing/tokenization a bit.
-with contextlib.suppress(Exception):
-    torch.set_num_threads(max(1, (os.cpu_count() or 4) // 2))
-    torch.set_num_interop_threads(max(1, (os.cpu_count() or 4) // 4))
+except Exception as e:  # pragma: no cover - informational
+    logger.info("Fast SDPA not enabled: %s", e)
 
 logger.info(f"bf16 supported?: {torch.cuda.is_bf16_supported()}")
 
@@ -75,28 +72,36 @@ class SeamlessEngine:
         # Warm up once to populate MIOpen/rocBLAS/attention caches.
         try:
             logger.info("Warmup generate() - BEGIN")
+            warm_start = time.perf_counter()
             sr = 16000
             warm = torch.zeros(sr // 2, dtype=torch.float32)
             _ = self.s2st(warm, target_language="eng")
-            logger.info("Warmup generate() - END")
-        except Exception as e:
+            warm_ms = int((time.perf_counter() - warm_start) * 1000)
+            logger.info("Warmup generate() - END %d ms", warm_ms)
+        except Exception as e:  # pragma: no cover - warmup best effort
             logger.info("Warmup skipped: %s", e)
 
     @torch.inference_mode()
-    def s2st(self, audio_16k: torch.Tensor, target_language: str) -> torch.Tensor:  # noqa: C901, PLR0912
+    def s2st(self, audio_16k: torch.Tensor, target_language: str) -> torch.Tensor:  # noqa: C901, PLR0912, PLR0915
         """
         Speech-to-speech translation.
         audio_16k: Mono waveform tensor at 16 kHz in [-1, 1], CPU.
         """
+        t0 = time.perf_counter()
+
         logger.info("Pin CPU tensor for faster host→device transfer")
         audio_tensor = audio_16k.contiguous()
         if not audio_tensor.is_cuda:
             with contextlib.suppress(Exception):
                 audio_tensor = audio_tensor.pin_memory()
         audio_np = audio_tensor.cpu().numpy()
+        t1 = time.perf_counter()
+        logger.info("prep_ms=%d", int((t1 - t0) * 1000))
 
         logger.info("Processor runs on CPU")
         inputs = self.processor(audios=[audio_np], sampling_rate=16000, return_tensors="pt")
+        t2 = time.perf_counter()
+        logger.info("processor_ms=%d", int((t2 - t1) * 1000))
 
         logger.info("Move features to GPU")
         dev = self.cfg.device
@@ -107,6 +112,8 @@ class SeamlessEngine:
                     inputs[k] = v.to(dev, dtype=dt, non_blocking=True)
                 else:
                     inputs[k] = v.to(dev, non_blocking=True)
+        t3 = time.perf_counter()
+        logger.info("h2d_ms=%d", int((t3 - t2) * 1000))
 
         logger.info("Inference in mixed precision")
         # Re-enable optimized attention paths (no forced MATH backend).
@@ -121,6 +128,10 @@ class SeamlessEngine:
                 use_cache=True,  # allow kv-cache for throughput
                 return_dict_in_generate=False,
             )
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        t4 = time.perf_counter()
+        logger.info("generate_ms=%d", int((t4 - t3) * 1000))
 
         logger.info("Handle different output formats")
         if isinstance(generated, torch.Tensor):
@@ -142,6 +153,11 @@ class SeamlessEngine:
             out = torch.as_tensor(generated[0], dtype=torch.float32)
         else:
             out = torch.as_tensor(generated, dtype=torch.float32)
+
+        t5 = time.perf_counter()
+        logger.info(
+            "post_ms=%d total_ms=%d", int((t5 - t4) * 1000), int((t5 - t0) * 1000)
+        )
 
         return torch.clamp(out, -1.0, 1.0)
 
@@ -177,20 +193,27 @@ async def translate(req: TranslateRequest) -> TranslateResponse:
     """Translate an audio segment using Seamless."""
     fmt = req.audio_format
     data = AudioUtils.b64_to_bytes(req.audio_b64)
+    loop = asyncio.get_event_loop()
+    decode_t0 = loop.time()
     if fmt.codec is Codec.G711_ULAW:
         pcm16 = AudioUtils.ulaw_bytes_to_pcm16(data)
         tens = torch.from_numpy(pcm16.astype(np.float32) / 32768.0)
         wave_16k = AudioUtils.resample(tens, 8000, 16000)
     else:
         tens = AudioUtils.pcm16_bytes_to_tensor_mono(data)
-        wave_16k = tens if fmt.sample_rate == 16000 else AudioUtils.resample(tens, fmt.sample_rate, 16000)
-
-    loop = asyncio.get_event_loop()
+        wave_16k = (
+            tens if fmt.sample_rate == 16000 else AudioUtils.resample(tens, fmt.sample_rate, 16000)
+        )
+    decode_ms = int((loop.time() - decode_t0) * 1000)
+    logger.info("decode_ms=%d", decode_ms)
     t0 = loop.time()
     if bool(int(os.environ.get("BYPASS_ENGINE", "0"))):
         out_16k = torch.clamp(wave_16k, -1.0, 1.0).to(torch.float32)
     else:
+        engine_t0 = loop.time()
         out_16k = engine.s2st(wave_16k, req.target_language)
+        engine_ms = int((loop.time() - engine_t0) * 1000)
+        logger.info("engine_ms=%d", engine_ms)
 
     latency_ms = int((loop.time() - t0) * 1000)
     logger.info("end2end_ms=%d out_samples=%d", latency_ms, int(out_16k.numel()))
