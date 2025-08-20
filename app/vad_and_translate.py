@@ -28,7 +28,7 @@ from .common import (
     SetupMessage,
 )
 
-logger = logging.getLogger("azure.vad_translate")
+logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 # Mapping from target language code to Azure voice name.
@@ -58,10 +58,6 @@ def _make_config(target_language: str) -> speechsdk.translation.SpeechTranslatio
         msg = f"Unsupported target language: {target_language}"
         raise ValueError(msg)
     cfg.voice_name = voice
-    cfg.set_property(
-        speechsdk.PropertyId.SpeechServiceResponse_SynthesisOutputFormat,
-        "raw-16khz-16bit-mono-pcm",
-    )
     return cfg
 
 
@@ -70,13 +66,23 @@ def _stream_format() -> speechsdk.audio.AudioStreamFormat:
     return speechsdk.audio.AudioStreamFormat(samples_per_second=16000, bits_per_sample=16, channels=1)
 
 
-def _azure_s2st(pcm_bytes: bytes, target_language: str) -> bytes:
+def _azure_s2st(pcm_bytes: bytes, source_language: str, target_language: str) -> bytes:
     """Translate PCM16 audio to the target language using Azure Speech."""
+    logger.info("X0")
     tr_cfg = _make_config(target_language)
+    logger.info("X1")
     stream_format = _stream_format()
+    logger.info("X2")
     push_stream = speechsdk.audio.PushAudioInputStream(stream_format=stream_format)
+    logger.info("X3")
     audio_in = speechsdk.audio.AudioConfig(stream=push_stream)
-    recognizer = speechsdk.translation.TranslationRecognizer(translation_config=tr_cfg, audio_config=audio_in)
+    logger.info("X4")
+    auto = speechsdk.languageconfig.AutoDetectSourceLanguageConfig(languages=[source_language])
+    logger.info("X5")
+    recognizer = speechsdk.translation.TranslationRecognizer(
+        translation_config=tr_cfg, auto_detect_source_language_config=auto, audio_config=audio_in
+    )
+    logger.info("X6")
 
     audio_chunks: list[bytes] = []
     done = threading.Event()
@@ -91,13 +97,21 @@ def _azure_s2st(pcm_bytes: bytes, target_language: str) -> bytes:
         elif reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
             done.set()
 
+    logger.info("X7")
+
     recognizer.synthesizing.connect(_on_synth)
+    logger.info("X8")
 
     recognizer.start_continuous_recognition_async().get()
+    logger.info("X9")
     push_stream.write(pcm_bytes)
+    logger.info("X10")
     push_stream.close()
+    logger.info("X11")
     done.wait()
+    logger.info("X12")
     recognizer.stop_continuous_recognition_async().get()
+    logger.info("X13")
     return b"".join(audio_chunks)
 
 
@@ -116,6 +130,7 @@ class TranslateRequest(BaseModel):
 
     audio_b64: str = Field(..., description="Base64 encoded audio in the given format.")
     audio_format: AudioFormat
+    source_language: str
     target_language: str
 
 
@@ -130,11 +145,16 @@ class TranslateResponse(BaseModel):
 async def translate(req: TranslateRequest) -> TranslateResponse:
     """Translate an audio segment using Azure Speech."""
     fmt = req.audio_format
+    logger.info("A")
     if fmt.codec is not Codec.PCM16 or fmt.sample_rate != 16000:
         raise HTTPException(status_code=400, detail="only 16 kHz PCM16 supported")
+    logger.info("B")
     pcm_bytes = AudioUtils.b64_to_bytes(req.audio_b64)
-    out_pcm = await asyncio.to_thread(_azure_s2st, pcm_bytes, req.target_language)
+    logger.info("V")
+    out_pcm = await asyncio.to_thread(_azure_s2st, pcm_bytes, req.source_language, req.target_language)
+    logger.info("D")
     duration_ms = len(out_pcm) * 1000 // (2 * 16000)
+    logger.info("E")
     return TranslateResponse(audio_b64=AudioUtils.bytes_to_b64(out_pcm), duration_ms=duration_ms)
 
 
@@ -152,9 +172,7 @@ async def ws_handler(ws: WebSocket) -> None:  # noqa: C901, PLR0915
         raw = await ws.receive_text()
         setup = SetupMessage.model_validate_json(raw)
     except Exception as exc:
-        await ws.send_text(
-            ErrorMessage(type="error", code="bad_setup", message=str(exc)).model_dump_json()
-        )
+        await ws.send_text(ErrorMessage(type="error", code="bad_setup", message=str(exc)).model_dump_json())
         await ws.close()
         return
 
@@ -165,9 +183,7 @@ async def ws_handler(ws: WebSocket) -> None:  # noqa: C901, PLR0915
 
     async def send_ready() -> None:
         """Send the initial ready message to the client."""
-        await ws.send_text(
-            ReadyMessage(type="ready", session_id=str(id(ws))).model_dump_json()
-        )
+        await ws.send_text(ReadyMessage(type="ready", session_id=str(id(ws))).model_dump_json())
 
     async def send_audio(chunk: bytes) -> None:
         """Send a translated audio chunk to the client."""
@@ -202,9 +218,7 @@ async def ws_handler(ws: WebSocket) -> None:  # noqa: C901, PLR0915
         cfg = _make_config(setup.target_language)
         push_stream = speechsdk.audio.PushAudioInputStream(stream_format=_stream_format())
         audio_in = speechsdk.audio.AudioConfig(stream=push_stream)
-        recognizer = speechsdk.translation.TranslationRecognizer(
-            translation_config=cfg, audio_config=audio_in
-        )
+        recognizer = speechsdk.translation.TranslationRecognizer(translation_config=cfg, audio_config=audio_in)
 
         current_audio = bytearray()
 

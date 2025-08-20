@@ -5,6 +5,7 @@ This module defines audio formats, helpers for encoding, decoding and
 resampling audio data, and the WebSocket protocol message models used by
 both the VAD and translation services.
 """
+
 from __future__ import annotations
 
 import base64
@@ -93,11 +94,8 @@ class SetupMessage(BaseModel):
     """Initial setup message sent by the client."""
 
     type: Literal["setup"] = "setup"
-    target_language: str = Field(
-        ..., description="Target language code as supported by the service."
-    )
+    target_language: str = Field(..., description="Target language code as supported by the service.")
     audio_format: AudioFormat
-    chunking: dict[str, int]
 
 
 class AudioMessage(BaseModel):
@@ -151,3 +149,68 @@ class ErrorMessage(BaseModel):
     type: Literal["error"] = "error"
     code: Literal["bad_setup", "invalid_audio", "over_limit", "server_error"]
     message: str
+
+
+# ----------------
+
+LANGUAGE_MAP = {
+    # Nordics
+    "da": "dan",
+    "sv": "swe",
+    "nb": "nob",
+    "nn": "nno",
+    "no": "nob",
+    "is": "isl",
+    "fi": "fin",
+    # Big ones
+    "en": "eng",
+    "de": "deu",
+    "fr": "fra",
+    "es": "spa",
+    "pt": "por",
+    "it": "ita",
+    "nl": "nld",
+    "pl": "pol",
+    "cs": "ces",
+    "sk": "slk",
+    "sl": "slv",
+    "hr": "hrv",
+    "sr": "srp",
+    "ro": "ron",
+    "bg": "bul",
+    "ru": "rus",
+    "uk": "ukr",
+    "tr": "tur",
+    "el": "ell",
+    "hu": "hun",
+    # Balkans/Baltics
+    "bs": "bos",
+    "sq": "als",  # note: model uses 'bos'; 'als' (Tosk Albanian) may be unsupported for speech
+    "lv": "lvs",
+    "lt": "lit",
+    "et": "est",
+    # Asian
+    "zh": "cmn",
+    "zh-cn": "cmn",
+    "zh-hans": "cmn",
+    "zh-hant": "cmn_Hant",
+    "zh-tw": "cmn_Hant",
+    "yue": "yue",
+    "ja": "jpn",
+    "ko": "kor",
+    "hi": "hin",
+    "id": "ind",
+    "ms": "zlm",
+    "th": "tha",
+    "vi": "vie",
+    # Semitic
+    "he": "heb",
+    "ar": "arb",
+    # Others seen in the model list
+    "fa": "pes",
+    "ur": "urd",
+    "az": "azj",
+    "kk": "kaz",
+    "ky": "kir",
+    "uz": "uzn",
+}

@@ -96,10 +96,10 @@ def translate_once_s2st(
     """
     tr_cfg = _make_translation_config(auth, cfg)
     audio_in = speechsdk.audio.AudioConfig(use_default_microphone=use_default_microphone)
-    # auto = speechsdk.languageconfig.AutoDetectSourceLanguageConfig(languages=[cfg.src_lang])
+    auto = speechsdk.languageconfig.AutoDetectSourceLanguageConfig(languages=[cfg.src_lang])
     recognizer = speechsdk.translation.TranslationRecognizer(
         translation_config=tr_cfg,
-        # auto_detect_source_language_config=auto,
+        auto_detect_source_language_config=auto,
         audio_config=audio_in,
     )
 

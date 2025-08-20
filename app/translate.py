@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from torch.nn.attention import sdpa_kernel
 from transformers import AutoProcessor, SeamlessM4Tv2ForSpeechToSpeech
 
-from .common import AudioFormat, AudioUtils, Codec
+from .common import LANGUAGE_MAP, AudioFormat, AudioUtils, Codec
 
 # Keep MIOpen warnings down while allowing workspace for best perf.
 os.environ.setdefault("MIOPEN_LOG_LEVEL", "1")  # 0=silent, 1=warn+err
@@ -176,7 +176,7 @@ class TranslateRequest(BaseModel):
 
     audio_b64: str = Field(..., description="Base64 encoded audio in the given format.")
     audio_format: AudioFormat
-    target_language: str
+    target_language: str  # 2 letter format
 
 
 class TranslateResponse(BaseModel):
@@ -207,7 +207,7 @@ async def translate(req: TranslateRequest) -> TranslateResponse:
         out_16k = torch.clamp(wave_16k, -1.0, 1.0).to(torch.float32)
     else:
         engine_t0 = loop.time()
-        out_16k = engine.s2st(wave_16k, req.target_language)
+        out_16k = engine.s2st(wave_16k, LANGUAGE_MAP[req.target_language])
         engine_ms = int((loop.time() - engine_t0) * 1000)
         logger.info("engine_ms=%d", engine_ms)
 

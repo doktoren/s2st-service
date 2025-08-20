@@ -50,8 +50,6 @@ def _silero_is_speech(pcm16_a: bytes, pcm16_b: bytes) -> bool:
     return prob > 0.5
 
 
-
-
 # ---------------------------
 # Session handling
 # ---------------------------
@@ -207,7 +205,7 @@ async def ws_handler(ws: WebSocket) -> None:  # noqa: C901
             await ws.close()
         return
 
-    vad_aggr = int(setup.chunking.get("vad_aggressiveness", 1))
+    vad_aggr = 1
     state = SessionState(
         vad=make_vad(vad_aggr),
         vad_aggr=vad_aggr,

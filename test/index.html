@@ -15,18 +15,21 @@
 <body>
   <div>
     <label>WS URL</label>
-    <input id="wsurl" size="40" value="wss://lenovo.atlas-betelgeuse.ts.net/ws" />
+    <input id="wsurl" size="40" value="ws://localhost:8003/ws" />
   </div>
   <div>
     <label>HTTP URL</label>
-    <input id="httpurl" size="40" value="https://lenovo.atlas-betelgeuse.ts.net/translate" />
+    <input id="httpurl" size="40" value="http://localhost:8003/translate" />
   </div>
   <div style="margin-top:.5rem">
+    <label>Source</label><input id="src" value="da-DK" size="6" />
     <label>Target</label><input id="tgt" value="en" size="6" />
-    <button id="start">Start WS</button>
-    <button id="stop" disabled>Stop WS</button>
+    <br/>
     <button id="startHttp">Start HTTP</button>
     <button id="stopHttp" disabled>Stop HTTP</button>
+    <br/>
+    <button id="start">Start WS</button>
+    <button id="stop" disabled>Stop WS</button>
   </div>
   <div id="log"></div>
 
@@ -82,8 +85,8 @@ async function start() {
   try { await stop(); } catch {}
 
   const WS_URL = document.getElementById("wsurl").value.trim();
-  const tgtLangIn = document.getElementById("tgt").value.trim() || "en";
-  const tgtLang = toSeamlessLang(tgtLangIn, {target:true});
+  const tgtLang = document.getElementById("tgt").value.trim() || "en";
+  const srcLang = document.getElementById("src").value.trim() || "da-DK";
   seq = 0; framesSent = 0; nextPlayTime = 0;
 
   if (!navigator.mediaDevices?.getUserMedia) {
@@ -159,9 +162,9 @@ async function start() {
     log("WS connected");
     const setup = {
       type: "setup",
+      source_language: srcLang,
       target_language: tgtLang,
       audio_format: { codec: "pcm16", sample_rate: 16000, channels: 1 },
-      chunking: { strategy: "server_vad" }
     };
     ws.send(JSON.stringify(setup));
   };
@@ -229,8 +232,8 @@ async function startHttp() {
     alert("getUserMedia unavailable. Use https or http://localhost.");
     return;
   }
-  const tgtLangIn = document.getElementById("tgt").value.trim() || "en";
-  const tgtLang = toSeamlessLang(tgtLangIn, {target:true});
+  const tgtLang = document.getElementById("tgt").value.trim() || "en";
+  const srcLang = document.getElementById("src").value.trim() || "da-DK";
   ctx = new (window.AudioContext || window.webkitAudioContext)();
   try {
     mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -303,14 +306,14 @@ async function stopHttp() {
   const u8 = floatToPcm16LE(buf);
   const b64 = base64FromBytes(u8);
   const HTTP_URL = document.getElementById("httpurl").value.trim();
-  const tgtLangIn = document.getElementById("tgt").value.trim() || "en";
-  const tgtLang = toSeamlessLang(tgtLangIn, {target:true});
+  const tgtLang = document.getElementById("tgt").value.trim() || "en";
+  const srcLang = document.getElementById("src").value.trim() || "da-DK";
   let resp;
   try {
     resp = await fetch(HTTP_URL, {
       method: "POST",
       headers: {"content-type": "application/json"},
-      body: JSON.stringify({audio_b64: b64, audio_format: {codec: "pcm16", sample_rate: 16000, channels: 1}, target_language: tgtLang})
+      body: JSON.stringify({audio_b64: b64, audio_format: {codec: "pcm16", sample_rate: 16000, channels: 1}, source_language: srcLang, target_language: tgtLang})
     });
   } catch (e) {
     log("HTTP error:", e.message || e);
