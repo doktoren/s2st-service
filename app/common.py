@@ -94,6 +94,7 @@ class SetupMessage(BaseModel):
     """Initial setup message sent by the client."""
 
     type: Literal["setup"] = "setup"
+    source_language: str = Field(..., description="Source language code for recognition.")
     target_language: str = Field(..., description="Target language code as supported by the service.")
     audio_format: AudioFormat
 
