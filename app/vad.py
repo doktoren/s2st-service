@@ -8,8 +8,6 @@ import logging
 import os
 from contextlib import suppress
 from dataclasses import dataclass
-from enum import Enum
-from typing import Any, Literal
 
 import audioop
 import httpx
@@ -17,7 +15,19 @@ import torch
 import webrtcvad
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field, RootModel
+
+from .common import (
+    AudioChunkMessage,
+    AudioFormat,
+    AudioMessage,
+    CloseMessage,
+    Codec,
+    EndOfAudioMessage,
+    ErrorMessage,
+    IncomingMessage,
+    ReadyMessage,
+    SetupMessage,
+)
 
 logger = logging.getLogger("seamless.ws")
 logging.basicConfig(level=logging.INFO)
@@ -40,86 +50,6 @@ def _silero_is_speech(pcm16_a: bytes, pcm16_b: bytes) -> bool:
     return prob > 0.5
 
 
-# ---------------------------
-# Protocol models
-# ---------------------------
-
-
-class Codec(str, Enum):
-    """Supported audio codecs for the client/server wire format."""
-
-    G711_ULAW = "g711_ulaw"
-    PCM16 = "pcm16"
-
-
-class AudioFormat(BaseModel):
-    """Audio format negotiated with the client."""
-
-    codec: Codec
-    sample_rate: Literal[8000, 16000, 24000]
-    channels: Literal[1]
-
-
-class SetupMessage(BaseModel):
-    """Initial setup message sent by the client."""
-
-    type: Literal["setup"] = "setup"
-    target_language: str = Field(..., description="Target language code as supported by Seamless.")
-    audio_format: AudioFormat
-    chunking: dict[str, Any]
-
-
-class AudioMessage(BaseModel):
-    """Audio frame payload."""
-
-    type: Literal["audio"] = "audio"
-    seq: int
-    audio_b64: str
-    duration_ms: int
-
-
-class CloseMessage(BaseModel):
-    """Client intends to close the session."""
-
-    type: Literal["close"] = "close"
-
-
-IncomingMessage = RootModel[SetupMessage | AudioMessage | CloseMessage]
-
-
-class ReadyMessage(BaseModel):
-    """Server response after setup negotiation."""
-
-    type: Literal["ready"] = "ready"
-    session_id: str
-
-
-class AudioChunkMessage(BaseModel):
-    """Chunk of synthesized translation audio."""
-
-    type: Literal["audio_chunk"] = "audio_chunk"
-    utterance_id: str
-    seq: int
-    audio_b64: str
-    duration_ms: int
-
-
-class EndOfAudioMessage(BaseModel):
-    """Marks completion of one utterance translation."""
-
-    type: Literal["end_of_audio"] = "end_of_audio"
-    utterance_id: str
-    latency_ms: int
-    src_duration_ms: int
-    tgt_duration_ms: int
-
-
-class ErrorMessage(BaseModel):
-    """Error payload."""
-
-    type: Literal["error"] = "error"
-    code: Literal["bad_setup", "invalid_audio", "over_limit", "server_error"]
-    message: str
 
 
 # ---------------------------
