@@ -1,9 +1,9 @@
 """
-Shared utilities and models for audio processing.
+Shared utilities and models for audio processing and protocol handling.
 
-This module defines audio formats and helpers for encoding,
-decoding and resampling audio data used by both the WebSocket and
-HTTP translation services.
+This module defines audio formats, helpers for encoding, decoding and
+resampling audio data, and the WebSocket protocol message models used by
+both the VAD and translation services.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import g711
 import numpy as np
 import torch
 import torchaudio
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, RootModel
 
 
 class Codec(str, Enum):
@@ -82,3 +82,72 @@ class AudioUtils:
             return wave
         resampler = torchaudio.transforms.Resample(orig_freq=src_sr, new_freq=dst_sr)
         return cast("torch.Tensor", resampler(wave.view(1, -1))).view(-1)
+
+
+# ---------------------------
+# Protocol models
+# ---------------------------
+
+
+class SetupMessage(BaseModel):
+    """Initial setup message sent by the client."""
+
+    type: Literal["setup"] = "setup"
+    target_language: str = Field(
+        ..., description="Target language code as supported by the service."
+    )
+    audio_format: AudioFormat
+    chunking: dict[str, int]
+
+
+class AudioMessage(BaseModel):
+    """Audio frame payload."""
+
+    type: Literal["audio"] = "audio"
+    seq: int
+    audio_b64: str
+    duration_ms: int
+
+
+class CloseMessage(BaseModel):
+    """Client intends to close the session."""
+
+    type: Literal["close"] = "close"
+
+
+IncomingMessage = RootModel[SetupMessage | AudioMessage | CloseMessage]
+
+
+class ReadyMessage(BaseModel):
+    """Server response after setup negotiation."""
+
+    type: Literal["ready"] = "ready"
+    session_id: str
+
+
+class AudioChunkMessage(BaseModel):
+    """Chunk of synthesized translation audio."""
+
+    type: Literal["audio_chunk"] = "audio_chunk"
+    utterance_id: str
+    seq: int
+    audio_b64: str
+    duration_ms: int
+
+
+class EndOfAudioMessage(BaseModel):
+    """Marks completion of one utterance translation."""
+
+    type: Literal["end_of_audio"] = "end_of_audio"
+    utterance_id: str
+    latency_ms: int
+    src_duration_ms: int
+    tgt_duration_ms: int
+
+
+class ErrorMessage(BaseModel):
+    """Error payload."""
+
+    type: Literal["error"] = "error"
+    code: Literal["bad_setup", "invalid_audio", "over_limit", "server_error"]
+    message: str
