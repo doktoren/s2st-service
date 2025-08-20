@@ -1,5 +1,5 @@
 """
-SPEECH_KEY=<secret> uv run python test/azure_test_s2tt.py
+SPEECH_KEY=<secret> uv run python app/azure_test_s2tt.py
 """
 
 import os

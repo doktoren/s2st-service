@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import os
 import queue
 import threading
@@ -27,8 +28,12 @@ from .common import (
     SetupMessage,
 )
 
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
 # Mapping from target language code to Azure voice name.
 VOICE_MAP: dict[str, str] = {"en": "en-US-JennyNeural"}
+TARGET_MAP: dict[str, str] = {"en": "en-US", "da": "da-DK"}
 
 
 def _env(name: str) -> str:
@@ -40,57 +45,66 @@ def _env(name: str) -> str:
     return val
 
 
-def _make_config(
-    source_language: str, target_language: str
-) -> speechsdk.translation.SpeechTranslationConfig:
-    """Build a translation config for Azure Speech."""
-    key = _env("SPEECH_KEY")
-    region = os.getenv("SPEECH_REGION", "northeurope")
-    cfg = speechsdk.translation.SpeechTranslationConfig(subscription=key, region=region)
-    cfg.speech_recognition_language = source_language
-    cfg.add_target_language(target_language)
-    voice = VOICE_MAP.get(target_language)
-    if voice is None:
-        msg = f"Unsupported target language: {target_language}"
-        raise ValueError(msg)
-    cfg.voice_name = voice
-    return cfg
-
-
 def _stream_format() -> speechsdk.audio.AudioStreamFormat:
     """Return the default PCM16 mono stream format."""
     return speechsdk.audio.AudioStreamFormat(samples_per_second=16000, bits_per_sample=16, channels=1)
 
 
-def _azure_s2st(
-    pcm_bytes: bytes, cfg: speechsdk.translation.SpeechTranslationConfig
-) -> bytes:
+def _azure_s2st(pcm_bytes: bytes, source_language: str, target_language: str) -> bytes:
     """Translate PCM16 audio using Azure Speech."""
-    push_stream = speechsdk.audio.PushAudioInputStream(stream_format=_stream_format())
-    audio_in = speechsdk.audio.AudioConfig(stream=push_stream)
-    recognizer = speechsdk.translation.TranslationRecognizer(
-        translation_config=cfg, audio_config=audio_in
+    logger.info(
+        f"_azure_s2st(pcm_bytes of len {len(pcm_bytes)}, "
+        f"source_language={source_language}, target_language={target_language}): "
     )
+    config = speechsdk.translation.SpeechTranslationConfig(
+        subscription=_env("SPEECH_KEY"), region=os.getenv("SPEECH_REGION", "northeurope")
+    )
+    config.speech_recognition_language = TARGET_MAP[source_language]
+    config.add_target_language(target_language)
+    config.voice_name = VOICE_MAP[target_language]
+    # config.speech_synthesis_voice_name = VOICE_MAP[target_language]  # No, this is for Text-To-Speech
+    config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Raw16Khz16BitMonoPcm)
 
+    push_stream = speechsdk.audio.PushAudioInputStream(stream_format=_stream_format())
+    recognizer = speechsdk.translation.TranslationRecognizer(
+        translation_config=config,
+        audio_config=speechsdk.audio.AudioConfig(stream=push_stream),
+    )
     audio_chunks: list[bytes] = []
     done = threading.Event()
 
-    def _on_synth(_s: object, e: speechsdk.SpeechSynthesisEventArgs) -> None:
+    def _on_synthesizing(event_args: speechsdk.translation.TranslationSynthesisEventArgs) -> None:
         """Collect synthesized audio chunks and signal completion."""
-        reason = getattr(e.result, "reason", None)
-        if reason == speechsdk.ResultReason.SynthesizingAudio:
-            chunk = getattr(e.result, "audio", None)
-            if isinstance(chunk, (bytes, bytearray)):
-                audio_chunks.append(bytes(chunk))
-        elif reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
-            done.set()
+        match event_args.result.reason:
+            case speechsdk.ResultReason.SynthesizingAudio:
+                audio_chunks.append(event_args.result.audio)
+            case speechsdk.ResultReason.SynthesizingAudioCompleted:
+                logger.info("Synthesizing audio completed")
+            case _:
+                logger.info(f"Unknown event: {event_args}")
 
-    recognizer.synthesizing.connect(_on_synth)
-    recognizer.start_continuous_recognition_async().get()
-    push_stream.write(pcm_bytes)
-    push_stream.close()
-    done.wait()
-    recognizer.stop_continuous_recognition_async().get()
+    def _on_recognizing(event_args: speechsdk.translation.TranslationRecognitionEventArgs) -> None:
+        """Collect synthesized audio chunks and signal completion."""
+        logger.info(f"_on_recognizing({event_args}) called")
+
+    def _set_done(event_args: object) -> None:
+        logger.info(f"_set_done({event_args}) called")
+        done.set()
+
+    recognizer.synthesizing.connect(_on_synthesizing)
+    recognizer.recognizing.connect(_on_recognizing)
+    recognizer.session_stopped.connect(_set_done)
+    recognizer.canceled.connect(_set_done)
+    try:
+        recognizer.start_continuous_recognition()
+        logger.info(
+            f"Writing {len(pcm_bytes)}: {base64.b64encode(pcm_bytes[:30])!r}...{base64.b64encode(pcm_bytes[-30:])!r}"
+        )
+        push_stream.write(pcm_bytes)
+        push_stream.close()
+        done.wait()
+    finally:
+        recognizer.stop_continuous_recognition()
     return b"".join(audio_chunks)
 
 
@@ -121,14 +135,14 @@ class TranslateResponse(BaseModel):
 
 
 @app.post("/translate", response_model=TranslateResponse)
-async def translate(req: TranslateRequest) -> TranslateResponse:
+def translate(req: TranslateRequest) -> TranslateResponse:
     """Translate an audio segment using Azure Speech."""
+    # logger.info(req.model_dump())
     fmt = req.audio_format
     if fmt.codec is not Codec.PCM16 or fmt.sample_rate != 16000:
         raise HTTPException(status_code=400, detail="only 16 kHz PCM16 supported")
     pcm_bytes = AudioUtils.b64_to_bytes(req.audio_b64)
-    cfg = _make_config(req.source_language, req.target_language)
-    out_pcm = await asyncio.to_thread(_azure_s2st, pcm_bytes, cfg)
+    out_pcm = _azure_s2st(pcm_bytes, req.source_language, req.target_language)
     duration_ms = len(out_pcm) * 1000 // (2 * 16000)
     return TranslateResponse(audio_b64=AudioUtils.bytes_to_b64(out_pcm), duration_ms=duration_ms)
 
@@ -190,28 +204,42 @@ async def ws_handler(ws: WebSocket) -> None:  # noqa: C901, PLR0915
 
     def worker() -> None:
         """Background thread feeding audio to Azure and relaying results."""
-        cfg = _make_config(setup.source_language, setup.target_language)
+        count = 0
+        config = speechsdk.translation.SpeechTranslationConfig(
+            subscription=_env("SPEECH_KEY"), region=os.getenv("SPEECH_REGION", "northeurope")
+        )
+        config.speech_recognition_language = TARGET_MAP[setup.source_language]
+        config.add_target_language(setup.target_language)
+        config.voice_name = VOICE_MAP[setup.target_language]
+        # config.speech_synthesis_voice_name = VOICE_MAP[target_language]  # No, this is for Text-To-Speech
+        config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Raw16Khz16BitMonoPcm)
+
         push_stream = speechsdk.audio.PushAudioInputStream(stream_format=_stream_format())
         audio_in = speechsdk.audio.AudioConfig(stream=push_stream)
-        recognizer = speechsdk.translation.TranslationRecognizer(translation_config=cfg, audio_config=audio_in)
+        recognizer = speechsdk.translation.TranslationRecognizer(translation_config=config, audio_config=audio_in)
 
-        current_audio = bytearray()
+        def _on_synthesizing(event_args: speechsdk.translation.TranslationSynthesisEventArgs) -> None:
+            """Collect synthesized audio chunks and signal completion."""
+            match event_args.result.reason:
+                case speechsdk.ResultReason.SynthesizingAudio:
+                    asyncio.run_coroutine_threadsafe(send_audio(event_args.result.audio), loop)
+                case speechsdk.ResultReason.SynthesizingAudioCompleted:
+                    logger.info("Synthesizing audio completed")
+                case _:
+                    logger.info(f"Unknown event: {event_args}")
 
-        def _on_synth(_s: object, e: speechsdk.SpeechSynthesisEventArgs) -> None:
-            """Handle synthesized audio callbacks from Azure Speech."""
-            reason = getattr(e.result, "reason", None)
-            if reason == speechsdk.ResultReason.SynthesizingAudio:
-                chunk = getattr(e.result, "audio", None)
-                if isinstance(chunk, (bytes, bytearray)):
-                    data = bytes(chunk)
-                    current_audio.extend(data)
-                    asyncio.run_coroutine_threadsafe(send_audio(data), loop)
-            elif reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
-                tgt_ms = len(current_audio) * 1000 // (2 * 16000)
-                current_audio.clear()
-                asyncio.run_coroutine_threadsafe(send_end(tgt_ms), loop)
+        def _on_recognizing(event_args: speechsdk.translation.TranslationRecognitionEventArgs) -> None:
+            """Collect synthesized audio chunks and signal completion."""
+            logger.info(f"_on_recognizing({event_args}) called")
 
-        recognizer.synthesizing.connect(_on_synth)
+        def _set_done(event_args: object) -> None:
+            logger.info(f"_set_done({event_args}) called")
+            frame_q.put(None)
+
+        recognizer.synthesizing.connect(_on_synthesizing)
+        recognizer.recognizing.connect(_on_recognizing)
+        recognizer.session_stopped.connect(_set_done)
+        recognizer.canceled.connect(_set_done)
 
         recognizer.start_continuous_recognition_async().get()
         asyncio.run_coroutine_threadsafe(send_ready(), loop)
@@ -220,6 +248,10 @@ async def ws_handler(ws: WebSocket) -> None:  # noqa: C901, PLR0915
             frame = frame_q.get()
             if frame is None:
                 break
+
+            count += 1
+            if count % 50 == 0:
+                logger.info("Pushing audio frame")
             push_stream.write(frame)
         push_stream.close()
         recognizer.stop_continuous_recognition_async().get()

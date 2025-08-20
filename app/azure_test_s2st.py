@@ -1,7 +1,7 @@
 """
 Speech-to-speech translation using Azure Speech.
 
-SPEECH_KEY=<secret> uv run python test/azure_test_s2st.py
+SPEECH_KEY=<secret> uv run python app/azure_test_s2st.py
 
 Usage patterns:
 - call `translate_once_s2st(...)` for one-shot mic → translated TTS to default speaker.
@@ -58,14 +58,15 @@ def _env(name: str, default: str | None = None) -> str:
 
 def _make_translation_config(auth: SpeechAuth, cfg: S2STConfig) -> speechsdk.translation.SpeechTranslationConfig:
     """Build and return a SpeechTranslationConfig."""
-    tr = speechsdk.translation.SpeechTranslationConfig(
+    config = speechsdk.translation.SpeechTranslationConfig(
         subscription=auth.key,
         region=auth.region,
     )
-    tr.speech_recognition_language = cfg.src_lang
-    tr.add_target_language(cfg.tgt_lang)
-    tr.voice_name = cfg.tgt_voice
-    return tr
+    config.speech_recognition_language = cfg.src_lang
+    config.add_target_language(cfg.tgt_lang)
+    config.voice_name = cfg.tgt_voice
+    config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Raw16Khz16BitMonoPcm)
+    return config
 
 
 def _default_stream_format(cfg: S2STConfig) -> speechsdk.audio.AudioStreamFormat:
