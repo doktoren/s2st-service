@@ -13,9 +13,9 @@ endpoint and receive translated audio in real time.
 
 Unfortunately the model is licensed under Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0) - **Non-commercial use only**
 
-Also, the model had problems keeping up with realtime speed.
+Also, the model had problems keeping up with realtime speed on my local hardware (AMD RX7900XTX).
 
-For those reasons I eventually went with a commercial alternative instead: [Azure Speech Translator](https://azure.microsoft.com/en-us/products/ai-services/ai-translator)
+For those reasons I aborted this work and went with a commercial alternative instead: [Azure Speech Translator](https://azure.microsoft.com/en-us/products/ai-services/ai-translator)
 
 
 ## Features
