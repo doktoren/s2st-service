@@ -1,4 +1,4 @@
-Warning: Large parts of this repository has been created by chatGPT and not everything has been reviewed in detail.
+Warning: Large parts of this repository has been vibe coded by [chatGPT](https://chatgpt.com/codex) and large parts have been reviewed in detail.
 
 # Seamless Speech-to-Speech Translation Service
 
@@ -13,7 +13,9 @@ endpoint and receive translated audio in real time.
 
 Unfortunately the model is licensed under Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0) - **Non-commercial use only**
 
-TODO: Check this commercial alternative: https://azure.microsoft.com/en-us/products/ai-services/ai-translator
+Also, the model had problems keeping up with realtime speed.
+
+For those reasons I eventually went with a commercial alternative instead: [Azure Speech Translator](https://azure.microsoft.com/en-us/products/ai-services/ai-translator)
 
 
 ## Features
@@ -62,8 +64,7 @@ uv pip install --group dev
 * The vad implementation lives in `app/vad.py`.
 * `run_vad.sh` starts the server with a single worker and verbose logging.
 
-Contributions are welcome.  Please ensure that code remains thoroughly typed
-and linted and that documentation is updated alongside code changes.
+Please ensure that code remains thoroughly typed and linted and that documentation is updated alongside code changes.
 
 
 ### Target platform
