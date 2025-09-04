@@ -3,7 +3,7 @@ Warning: Large parts of this repository has been vibe coded by [chatGPT](https:/
 # Seamless Speech-to-Speech Translation Service
 
 This repository hosts a small FastAPI based server that exposes Meta's
-SeamlessM4T-V2-Large model over a WebSocket interface.
+SeamlessM4T-V2-Large model ([Hugging Face](https://huggingface.co/facebook/seamless-m4t-v2-large)) over a WebSocket interface.
 
 [This demo page](https://seamless.metademolab.com/demo) lets you record some speech and have it translated using SeamlessM4T-V2-Large
 

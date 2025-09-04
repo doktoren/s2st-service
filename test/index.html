@@ -13,23 +13,26 @@
 </style>
 
 <body>
-  <div>
-    <label>WS URL</label>
-    <input id="wsurl" size="40" value="ws://localhost:8003/ws" />
-  </div>
-  <div>
-    <label>HTTP URL</label>
-    <input id="httpurl" size="40" value="http://localhost:8003/translate" />
-  </div>
   <div style="margin-top:.5rem">
-    <label>Source</label><input id="src" value="da" size="6" />
-    <label>Target</label><input id="tgt" value="en" size="6" />
+    Translation languages (ISO-639-1):
+    <label>Source</label><input id="src" value="da" size="2" />
+    <label>Target</label><input id="tgt" value="en" size="2" />
+  </div>
+  <p/>
+  <div>
+    <label>Test translation backend:</label>
     <br/>
-    <button id="startHttp">Start HTTP</button>
-    <button id="stopHttp" disabled>Stop HTTP</button>
+    <input id="httpurl" size="30" value="http://localhost:8001/translate" />
+    <button id="startHttp">Start recording</button>
+    <button id="stopHttp" disabled>Stop recording and translate</button>
+  </div>
+  <p/>
+  <div>
+    <label>Test VAD backend (VAD backend calls translation service):</label>
     <br/>
-    <button id="start">Start WS</button>
-    <button id="stop" disabled>Stop WS</button>
+    <input id="wsurl" size="30" value="ws://localhost:8000/ws" />
+    <button id="start">Start VAD controlled recording</button>
+    <button id="stop" disabled>Stop recording</button>
   </div>
   <div id="log"></div>
 
