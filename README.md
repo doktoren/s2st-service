@@ -2,6 +2,8 @@ Warning: Large parts of this repository has been vibe coded by [chatGPT](https:/
 
 # Seamless Speech-to-Speech Translation Service
 
+[Watch demo](https://jespertorpkristensen-misc-public.s3.eu-central-1.amazonaws.com/demo.webm)
+
 This repository hosts a small FastAPI based server that exposes Meta's
 SeamlessM4T-V2-Large model ([Hugging Face](https://huggingface.co/facebook/seamless-m4t-v2-large)) over a WebSocket interface.
 
