@@ -1,6 +1,6 @@
-Warning: Large parts of this repository has been vibe coded by [chatGPT](https://chatgpt.com/codex) and large parts have been reviewed in detail.
+Warning: Large parts of this repository has been vibe coded using the coding agent [codex](https://chatgpt.com/codex) from OpenAI and large parts have been reviewed in detail.
 
-# Seamless Speech-to-Speech Translation Service
+# Speech-to-Speech Translation Service
 
 [Watch demo](https://jespertorpkristensen-misc-public.s3.eu-central-1.amazonaws.com/demo.webm)
 
@@ -17,7 +17,7 @@ Unfortunately the model is licensed under Creative Commons Attribution-NonCommer
 
 Also, the model had problems keeping up with realtime speed on my local hardware (AMD RX7900XTX).
 
-For those reasons I aborted this work and went with a commercial alternative instead: [Azure Speech Translator](https://azure.microsoft.com/en-us/products/ai-services/ai-translator)
+For those reasons I aborted the Seamless model and went with a commercial alternative instead: [Azure Speech Translation](https://azure.microsoft.com/en-us/products/ai-services/ai-translator)
 
 
 ## Features
