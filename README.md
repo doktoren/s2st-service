@@ -19,6 +19,7 @@ Also, the model had problems keeping up with realtime speed on my local hardware
 
 For those reasons I aborted the Seamless model and went with a commercial alternative instead: [Azure Speech Translation](https://azure.microsoft.com/en-us/products/ai-services/ai-translator)
 
+Documentation below is mostly AI generated.
 
 ## Features
 
