@@ -23,16 +23,14 @@
     <label>Test translation backend:</label>
     <br/>
     <input id="httpurl" size="30" value="http://localhost:8001/translate" />
-    <button id="startHttp">Start recording</button>
-    <button id="stopHttp" disabled>Stop recording and translate</button>
+    <button id="httpBtn" style="width:220px">Start recording</button>
   </div>
   <p/>
   <div>
     <label>Test VAD backend (VAD backend calls translation service):</label>
     <br/>
     <input id="wsurl" size="30" value="ws://localhost:8000/ws" />
-    <button id="start">Start VAD controlled recording</button>
-    <button id="stop" disabled>Stop recording</button>
+    <button id="vadBtn" style="width:220px">Start VAD controlled recording</button>
   </div>
   <div id="log"></div>
 
@@ -71,14 +69,24 @@ const log = (...a) => { const el = document.getElementById("log"); el.textConten
 
 let ctx, mediaStream, sourceNode, workletNode, sink, ws, seq = 0, playingCtx, framesSent = 0, nextPlayTime = 0, recBuffers = [];
 let opened = false;
-
-document.getElementById("start").onclick = start;
-// Prevent double-clicks creating two sessions
-document.getElementById("start").addEventListener("click", e => e.target.disabled = true);
-document.getElementById("stop").onclick = stop;
-document.getElementById("startHttp").onclick = startHttp;
-document.getElementById("startHttp").addEventListener("click", e => e.target.disabled = true);
-document.getElementById("stopHttp").onclick = stopHttp;
+const vadBtn = document.getElementById("vadBtn");
+const httpBtn = document.getElementById("httpBtn");
+vadBtn.dataset.running = "false";
+httpBtn.dataset.running = "false";
+vadBtn.onclick = () => {
+  if (vadBtn.dataset.running === "true") {
+    stop();
+  } else {
+    start();
+  }
+};
+httpBtn.onclick = () => {
+  if (httpBtn.dataset.running === "true") {
+    stopHttp();
+  } else {
+    startHttp();
+  }
+};
 
 async function start() {
   // If a previous session exists, stop it first to avoid leaking mic/audio state.
@@ -202,8 +210,8 @@ async function start() {
     log(`WS closed code=${e.code} reason=${e.reason || ""}`);
   };
 
-  document.getElementById("start").disabled = true;
-  document.getElementById("stop").disabled = false;
+  vadBtn.dataset.running = "true";
+  vadBtn.textContent = "Stop recording";
 }
 
 async function stop() {
@@ -226,8 +234,8 @@ async function stop() {
   try { await ctx?.close(); } catch {}
   try { await playingCtx?.close(); } catch {}
   playingCtx = undefined; nextPlayTime = 0;
-  document.getElementById("start").disabled = false;
-  document.getElementById("stop").disabled = true;
+  vadBtn.dataset.running = "false";
+  vadBtn.textContent = "Start VAD controlled recording";
 }
 
 async function startHttp() {
@@ -291,9 +299,8 @@ async function startHttp() {
   workletNode.port.onmessage = e => recBuffers.push(e.data);
   sourceNode.connect(workletNode);
   sink = ctx.createGain(); sink.gain.value = 0; workletNode.connect(sink); sink.connect(ctx.destination);
-  document.getElementById("startHttp").disabled = true;
-  document.getElementById("stopHttp").disabled = false;
-  document.getElementById("start").disabled = false;
+  httpBtn.dataset.running = "true";
+  httpBtn.textContent = "Stop recording and translate";
 }
 
 async function stopHttp() {
@@ -325,8 +332,8 @@ async function stopHttp() {
   const out = await resp.json();
   const bytes = bytesFromBase64(out.audio_b64);
   playPcm16Mono(bytes, 16000);
-  document.getElementById("startHttp").disabled = false;
-  document.getElementById("stopHttp").disabled = true;
+  httpBtn.dataset.running = "false";
+  httpBtn.textContent = "Start recording";
   recBuffers = [];
 }
 
