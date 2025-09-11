@@ -9,27 +9,29 @@
   label { margin-right: .5rem; }
   input, button { font: inherit; padding: .4rem .6rem; }
   button { margin-right: .5rem; }
+  .disabled { opacity: .5; pointer-events: none; }
   #log { margin-top: 1rem; white-space: pre-wrap; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; border: 1px solid #ddd; padding: .75rem; border-radius: .5rem; height: 14rem; overflow: auto; }
 </style>
 
 <body>
-  <div>
-    <label>WS URL</label>
-    <input id="wsurl" size="40" value="ws://localhost:8003/ws" />
-  </div>
-  <div>
-    <label>HTTP URL</label>
-    <input id="httpurl" size="40" value="http://localhost:8003/translate" />
-  </div>
   <div style="margin-top:.5rem">
-    <label>Source</label><input id="src" value="da" size="6" />
-    <label>Target</label><input id="tgt" value="en" size="6" />
+    Translation languages (ISO-639-1):
+    <label>Source (ignored by Seamless)</label><input id="src" value="da" size="2" />
+    <label>Target</label><input id="tgt" value="en" size="2" />
+  </div>
+  <p/>
+  <div id="httpRow">
+    <label>Test translation backend:</label>
     <br/>
-    <button id="startHttp">Start HTTP</button>
-    <button id="stopHttp" disabled>Stop HTTP</button>
+    <input id="httpurl" size="30" value="http://localhost:8001/translate" />
+    <button id="httpBtn" style="width:320px">Start recording</button>
+  </div>
+  <p/>
+  <div id="vadRow">
+    <label>Test VAD backend (VAD backend calls translation service):</label>
     <br/>
-    <button id="start">Start WS</button>
-    <button id="stop" disabled>Stop WS</button>
+    <input id="wsurl" size="30" value="ws://localhost:8000/ws" />
+    <button id="vadBtn" style="width:320px">Start VAD controlled recording</button>
   </div>
   <div id="log"></div>
 
@@ -68,14 +70,53 @@ const log = (...a) => { const el = document.getElementById("log"); el.textConten
 
 let ctx, mediaStream, sourceNode, workletNode, sink, ws, seq = 0, playingCtx, framesSent = 0, nextPlayTime = 0, recBuffers = [];
 let opened = false;
+const vadBtn = document.getElementById("vadBtn");
+const httpBtn = document.getElementById("httpBtn");
+const vadRow = document.getElementById("vadRow");
+const httpRow = document.getElementById("httpRow");
+const wsUrl = document.getElementById("wsurl");
+const httpUrl = document.getElementById("httpurl");
 
-document.getElementById("start").onclick = start;
-// Prevent double-clicks creating two sessions
-document.getElementById("start").addEventListener("click", e => e.target.disabled = true);
-document.getElementById("stop").onclick = stop;
-document.getElementById("startHttp").onclick = startHttp;
-document.getElementById("startHttp").addEventListener("click", e => e.target.disabled = true);
-document.getElementById("stopHttp").onclick = stopHttp;
+function disableVadRow() {
+  vadRow.classList.add("disabled");
+  vadBtn.disabled = true;
+  wsUrl.disabled = true;
+}
+
+function enableVadRow() {
+  vadRow.classList.remove("disabled");
+  vadBtn.disabled = false;
+  wsUrl.disabled = false;
+}
+
+function disableHttpRow() {
+  httpRow.classList.add("disabled");
+  httpBtn.disabled = true;
+  httpUrl.disabled = true;
+}
+
+function enableHttpRow() {
+  httpRow.classList.remove("disabled");
+  httpBtn.disabled = false;
+  httpUrl.disabled = false;
+}
+
+vadBtn.dataset.running = "false";
+httpBtn.dataset.running = "false";
+vadBtn.onclick = () => {
+  if (vadBtn.dataset.running === "true") {
+    stop();
+  } else {
+    start();
+  }
+};
+httpBtn.onclick = () => {
+  if (httpBtn.dataset.running === "true") {
+    stopHttp();
+  } else {
+    startHttp();
+  }
+};
 
 async function start() {
   // If a previous session exists, stop it first to avoid leaking mic/audio state.
@@ -84,13 +125,16 @@ async function start() {
   }
   try { await stop(); } catch {}
 
-  const WS_URL = document.getElementById("wsurl").value.trim();
+  disableHttpRow();
+
+  const WS_URL = wsUrl.value.trim();
   const tgtLang = document.getElementById("tgt").value.trim() || "en";
   const srcLang = document.getElementById("src").value.trim() || "da-DK";
   seq = 0; framesSent = 0; nextPlayTime = 0;
 
   if (!navigator.mediaDevices?.getUserMedia) {
     alert("getUserMedia unavailable. Use https or http://localhost.");
+    enableHttpRow();
     return;
   }
 
@@ -107,6 +151,7 @@ async function start() {
     });
   } catch (e) {
     log("Mic error:", e.message || e);
+    enableHttpRow();
     return;
   }
   sourceNode = ctx.createMediaStreamSource(mediaStream);
@@ -199,8 +244,8 @@ async function start() {
     log(`WS closed code=${e.code} reason=${e.reason || ""}`);
   };
 
-  document.getElementById("start").disabled = true;
-  document.getElementById("stop").disabled = false;
+  vadBtn.dataset.running = "true";
+  vadBtn.textContent = "Stop recording";
 }
 
 async function stop() {
@@ -223,13 +268,16 @@ async function stop() {
   try { await ctx?.close(); } catch {}
   try { await playingCtx?.close(); } catch {}
   playingCtx = undefined; nextPlayTime = 0;
-  document.getElementById("start").disabled = false;
-  document.getElementById("stop").disabled = true;
+  vadBtn.dataset.running = "false";
+  vadBtn.textContent = "Start VAD controlled recording";
+  enableHttpRow();
 }
 
 async function startHttp() {
+  disableVadRow();
   if (!navigator.mediaDevices?.getUserMedia) {
     alert("getUserMedia unavailable. Use https or http://localhost.");
+    enableVadRow();
     return;
   }
   const tgtLang = document.getElementById("tgt").value.trim() || "en";
@@ -246,6 +294,7 @@ async function startHttp() {
     });
   } catch (e) {
     log("Mic error:", e.message || e);
+    enableVadRow();
     return;
   }
   sourceNode = ctx.createMediaStreamSource(mediaStream);
@@ -288,9 +337,8 @@ async function startHttp() {
   workletNode.port.onmessage = e => recBuffers.push(e.data);
   sourceNode.connect(workletNode);
   sink = ctx.createGain(); sink.gain.value = 0; workletNode.connect(sink); sink.connect(ctx.destination);
-  document.getElementById("startHttp").disabled = true;
-  document.getElementById("stopHttp").disabled = false;
-  document.getElementById("start").disabled = false;
+  httpBtn.dataset.running = "true";
+  httpBtn.textContent = "Stop recording and translate";
 }
 
 async function stopHttp() {
@@ -322,9 +370,10 @@ async function stopHttp() {
   const out = await resp.json();
   const bytes = bytesFromBase64(out.audio_b64);
   playPcm16Mono(bytes, 16000);
-  document.getElementById("startHttp").disabled = false;
-  document.getElementById("stopHttp").disabled = true;
+  httpBtn.dataset.running = "false";
+  httpBtn.textContent = "Start recording";
   recBuffers = [];
+  enableVadRow();
 }
 
 function floatToPcm16LE(f32) {

@@ -44,7 +44,9 @@ def _silero_is_speech(pcm16_a: bytes, pcm16_b: bytes) -> bool:
         silero_model, _ = torch.hub.load(  # type: ignore[no-untyped-call]
             "snakers4/silero-vad", "silero_vad", trust_repo=True
         )
-    audio_tensor = torch.frombuffer(pcm16_a + pcm16_b, dtype=torch.int16).to(torch.float32) / 32768.0
+    logger.error(f"Length is {len(pcm16_a + pcm16_b)}")
+    pcm16 = (pcm16_a + pcm16_b)[-1024:]  # Silero expects exactly 1024 bytes
+    audio_tensor = torch.frombuffer(pcm16, dtype=torch.int16).to(torch.float32) / 32768.0
     with torch.no_grad():
         prob: float = float(silero_model(audio_tensor, 16000).item())
     return prob > 0.5
@@ -132,6 +134,8 @@ async def _handle_audio_msg(msg: AudioMessage, setup: SetupMessage, state: Sessi
         and all(audio.silero_is_speech for audio in state.audio[-SPEECH_STREAK_COUNT_THRESHOLD:])
     ):
         state.speech_detected = True
+        # Delete all audio up to the point where speech was detected
+        del state.audio[:-SPEECH_STREAK_COUNT_THRESHOLD]
 
 
 async def _maybe_infer_and_emit(ws: WebSocket, setup: SetupMessage, state: SessionState) -> None:
@@ -146,7 +150,7 @@ async def _maybe_infer_and_emit(ws: WebSocket, setup: SetupMessage, state: Sessi
         pcm_bytes = b"".join(audio.pcm16_16k for audio in state.audio)
         min_samples = 16000 // 10  # 0.1 second
         if len(pcm_bytes) // 2 < min_samples:
-            logger.info("Dropping short utterance: samples=%d", len(pcm_bytes) // 2)
+            logger.info(f"Dropping short utterance: samples={len(pcm_bytes) // 2}")
             return
 
         src_duration_ms = len(pcm_bytes) * 1000 // (2 * 16000)

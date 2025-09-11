@@ -1,11 +1,15 @@
-Warning: Large parts of this repository has been created by chatGPT and not everything has been reviewed in detail.
+# Speech-to-Speech Translation Service
 
-# Seamless Speech-to-Speech Translation Service
+**TL;DR**: Use [Azure Speech Translation](https://azure.microsoft.com/en-us/products/ai-services/ai-translator)
+
+Warning: Large parts of this repository has been vibe coded using the coding agent [codex](https://chatgpt.com/codex) from OpenAI and large parts have been reviewed in detail.
+
+Watch [15 minute presentation](https://jespertorpkristensen-misc-public.s3.eu-central-1.amazonaws.com/s2st-service-demo-2025-09-12.mp4) where I first justify *why* I made it and then demonstrates it in action.
 
 This repository hosts a small FastAPI based server that exposes Meta's
-SeamlessM4T-V2-Large model over a WebSocket interface.
+SeamlessM4T-V2-Large model ([Hugging Face](https://huggingface.co/facebook/seamless-m4t-v2-large)) over a WebSocket interface.
 
-[This demo page](https://seamless.metademolab.com/demo) lets you record some speech and have it translated using SeamlessM4T-V2-Large
+[This demo page](https://seamless.metademolab.com/demo) lets you record some speech and have it translated using SeamlessM4T (probably a V1 model).
 
 The goal of this repository is to run the full speech-to-speech translation pipeline locally without depending on
 any third-party cloud service.  Clients stream audio frames to the `/ws`
@@ -13,8 +17,11 @@ endpoint and receive translated audio in real time.
 
 Unfortunately the model is licensed under Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0) - **Non-commercial use only**
 
-TODO: Check this commercial alternative: https://azure.microsoft.com/en-us/products/ai-services/ai-translator
+Also, the model had problems keeping up with realtime speed on my local hardware (AMD RX7900XTX).
 
+For those reasons I aborted the Seamless model and went with a commercial alternative instead: [Azure Speech Translation](https://azure.microsoft.com/en-us/products/ai-services/ai-translator)
+
+Documentation below is mostly AI generated.
 
 ## Features
 
@@ -62,8 +69,7 @@ uv pip install --group dev
 * The vad implementation lives in `app/vad.py`.
 * `run_vad.sh` starts the server with a single worker and verbose logging.
 
-Contributions are welcome.  Please ensure that code remains thoroughly typed
-and linted and that documentation is updated alongside code changes.
+Please ensure that code remains thoroughly typed and linted and that documentation is updated alongside code changes.
 
 
 ### Target platform
