@@ -4,7 +4,7 @@
 
 Warning: Large parts of this repository has been vibe coded using the coding agent [codex](https://chatgpt.com/codex) from OpenAI and large parts have been reviewed in detail.
 
-Watch [15 minute presentation](https://jespertorpkristensen-misc-public.s3.eu-central-1.amazonaws.com/s2st-service-demo-2025-09-12.mp4) where I first justify *why* I made it and then demonstrates it in action.
+Watch [12 minute presentation](https://jespertorpkristensen-misc-public.s3.eu-central-1.amazonaws.com/s2st-service-demo-2025-09-17.mp4) where I first justify *why* I made it and then demonstrates it in action.
 
 This repository hosts a small FastAPI based server that exposes Meta's
 SeamlessM4T-V2-Large model ([Hugging Face](https://huggingface.co/facebook/seamless-m4t-v2-large)) over a WebSocket interface.
